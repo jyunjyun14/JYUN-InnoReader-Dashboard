@@ -1,0 +1,5 @@
+.env
+.inoreader_token.json
+__pycache__/
+*.pyc
+.streamlit/
