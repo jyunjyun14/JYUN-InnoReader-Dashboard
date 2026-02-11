@@ -260,6 +260,7 @@ DEFAULT_CRITERIA = {
     "keywords": [],
     "keywords_en": [],
     "negative_keywords": [],
+    "exclude_keywords": [],
     "country_boost": {},
 }
 
@@ -387,11 +388,17 @@ def score_article(article: dict, folder_name: str, settings: dict = None) -> tup
         return -1, [], []
 
     criteria = get_criteria_for_folder(folder_name, settings)
-    score = 0.0
-    matched_keywords = []
 
     title = (article.get("title") or "").lower()
     summary = (article.get("summary") or "").lower()
+
+    # 제외 키워드 매칭 (완전 제외)
+    for kw in criteria.get("exclude_keywords", []):
+        if _word_match(kw, title) or _word_match(kw, summary):
+            return -1, [], []
+
+    score = 0.0
+    matched_keywords = []
 
     # 한국어 키워드 매칭
     for kw in criteria["keywords"]:

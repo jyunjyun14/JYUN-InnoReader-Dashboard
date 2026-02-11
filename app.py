@@ -22,6 +22,147 @@ settings = st.session_state["settings"]
 
 st.title("바이오헬스 주간동향 뉴스 수집 RSS 대시보드")
 
+# ═══════════════════════════════════════════════════════════════
+# 사이드바: 설정 관리 (메인 콘텐츠보다 먼저 렌더링)
+# ═══════════════════════════════════════════════════════════════
+
+with st.sidebar:
+    st.header("설정 관리")
+
+    # ── 1. 분야 추가 ──
+    with st.expander("분야 추가", expanded=False):
+        new_folder = st.text_input("새 분야 이름", key="new_folder_name", placeholder="예: 재생의료")
+        if st.button("분야 추가", key="btn_add_folder") and new_folder.strip():
+            name = new_folder.strip()
+            if name in sm.get_folder_names(settings):
+                st.warning(f"'{name}' 분야가 이미 존재합니다.")
+            else:
+                settings = sm.add_folder(settings, name)
+                sm.save_settings(settings)
+                st.session_state["settings"] = settings
+                st.success(f"'{name}' 분야가 추가되었습니다.")
+                st.rerun()
+
+    # ── 2. 분야 삭제 ──
+    with st.expander("분야 삭제", expanded=False):
+        del_folder = st.selectbox(
+            "삭제할 분야", sm.get_folder_names(settings), key="del_folder_select"
+        )
+        if st.button("분야 삭제", key="btn_del_folder", type="primary"):
+            settings = sm.delete_folder(settings, del_folder)
+            sm.save_settings(settings)
+            st.session_state["settings"] = settings
+            st.success(f"'{del_folder}' 분야가 삭제되었습니다.")
+            st.rerun()
+
+    st.divider()
+
+    # ── 3. 분야별 설정 편집 ──
+    edit_folder = st.selectbox(
+        "편집할 분야 선택", sm.get_folder_names(settings), key="edit_folder_select"
+    )
+
+    if edit_folder:
+        cur_criteria = sm.get_criteria(settings, edit_folder)
+        cur_feeds = sm.get_feeds(settings, edit_folder)
+
+        # ── 3a. 선별 기준 편집 ──
+        with st.expander(f"선별 기준 편집 — {edit_folder}", expanded=False):
+            new_top_n = st.number_input(
+                "상위 N개 선별",
+                min_value=5, max_value=100,
+                value=cur_criteria.get("top_n", 20),
+                key=f"topn_{edit_folder}",
+            )
+
+            new_desc = st.text_area(
+                "분야 설명 (AI 스코어링용, 영문 권장)",
+                value=cur_criteria.get("description", ""),
+                height=100,
+                key=f"desc_{edit_folder}",
+            )
+
+            new_kw_kr = st.text_area(
+                "한국어 키워드 (줄바꿈으로 구분)",
+                value="\n".join(cur_criteria.get("keywords", [])),
+                height=150,
+                key=f"kw_kr_{edit_folder}",
+            )
+
+            new_kw_en = st.text_area(
+                "영어 키워드 (줄바꿈으로 구분)",
+                value="\n".join(cur_criteria.get("keywords_en", [])),
+                height=150,
+                key=f"kw_en_{edit_folder}",
+            )
+
+            new_neg_kw = st.text_area(
+                "감점 키워드 (줄바꿈으로 구분)",
+                value="\n".join(cur_criteria.get("negative_keywords", [])),
+                height=100,
+                key=f"neg_kw_{edit_folder}",
+                help="매칭 시 점수를 감점합니다 (제목 -3, 요약 -1)",
+            )
+
+            new_excl_kw = st.text_area(
+                "제외 키워드 (줄바꿈으로 구분)",
+                value="\n".join(cur_criteria.get("exclude_keywords", [])),
+                height=100,
+                key=f"excl_kw_{edit_folder}",
+                help="이 키워드가 포함된 기사는 완전히 제외됩니다",
+            )
+
+            if st.button("선별 기준 저장", key=f"btn_save_criteria_{edit_folder}"):
+                updated = {
+                    "top_n": new_top_n,
+                    "description": new_desc.strip(),
+                    "keywords": [k.strip() for k in new_kw_kr.strip().split("\n") if k.strip()],
+                    "keywords_en": [k.strip() for k in new_kw_en.strip().split("\n") if k.strip()],
+                    "negative_keywords": [k.strip() for k in new_neg_kw.strip().split("\n") if k.strip()],
+                    "exclude_keywords": [k.strip() for k in new_excl_kw.strip().split("\n") if k.strip()],
+                    "country_boost": cur_criteria.get("country_boost", {}),
+                }
+                settings = sm.update_criteria(settings, edit_folder, updated)
+                sm.save_settings(settings)
+                st.session_state["settings"] = settings
+                st.success("선별 기준이 저장되었습니다.")
+                st.rerun()
+
+        # ── 3b. RSS 피드 관리 ──
+        with st.expander(f"RSS 피드 관리 — {edit_folder}", expanded=False):
+            if cur_feeds:
+                st.write(f"등록된 피드: **{len(cur_feeds)}개**")
+                for fi, feed in enumerate(cur_feeds):
+                    col_name, col_del = st.columns([4, 1])
+                    with col_name:
+                        st.caption(f"{feed.get('name', '')} — {feed.get('url', '')[:60]}...")
+                    with col_del:
+                        if st.button("삭제", key=f"btn_del_feed_{edit_folder}_{fi}"):
+                            settings = sm.delete_feed(settings, edit_folder, fi)
+                            sm.save_settings(settings)
+                            st.session_state["settings"] = settings
+                            st.rerun()
+            else:
+                st.info("등록된 RSS 피드가 없습니다.")
+
+            st.write("---")
+            st.write("**새 RSS 피드 추가**")
+            new_feed_name = st.text_input(
+                "피드 이름", key=f"new_feed_name_{edit_folder}",
+                placeholder="예: FDA approval news",
+            )
+            new_feed_url = st.text_input(
+                "RSS URL", key=f"new_feed_url_{edit_folder}",
+                placeholder="https://www.google.co.kr/alerts/feeds/...",
+            )
+            if st.button("피드 추가", key=f"btn_add_feed_{edit_folder}") and new_feed_url.strip():
+                fname = new_feed_name.strip() or "새 피드"
+                settings = sm.add_feed(settings, edit_folder, fname, new_feed_url.strip())
+                sm.save_settings(settings)
+                st.session_state["settings"] = settings
+                st.success(f"'{fname}' 피드가 추가되었습니다.")
+                st.rerun()
+
 # ── Google Translate 헬퍼 ──
 _translator = GoogleTranslator(source="auto", target="ko")
 
@@ -471,135 +612,3 @@ if total_selected > 0:
 else:
     st.info("내보낼 기사가 없습니다. 위에서 기사를 선택해 주세요.")
 
-# ═══════════════════════════════════════════════════════════════
-# 사이드바: 설정 관리
-# ═══════════════════════════════════════════════════════════════
-
-with st.sidebar:
-    st.header("설정 관리")
-
-    # ── 1. 분야 추가 ──
-    with st.expander("분야 추가", expanded=False):
-        new_folder = st.text_input("새 분야 이름", key="new_folder_name", placeholder="예: 재생의료")
-        if st.button("분야 추가", key="btn_add_folder") and new_folder.strip():
-            name = new_folder.strip()
-            if name in sm.get_folder_names(settings):
-                st.warning(f"'{name}' 분야가 이미 존재합니다.")
-            else:
-                settings = sm.add_folder(settings, name)
-                sm.save_settings(settings)
-                st.session_state["settings"] = settings
-                st.success(f"'{name}' 분야가 추가되었습니다. 페이지를 새로고침하세요.")
-                st.rerun()
-
-    # ── 2. 분야 삭제 ──
-    with st.expander("분야 삭제", expanded=False):
-        del_folder = st.selectbox(
-            "삭제할 분야", sm.get_folder_names(settings), key="del_folder_select"
-        )
-        if st.button("분야 삭제", key="btn_del_folder", type="primary"):
-            settings = sm.delete_folder(settings, del_folder)
-            sm.save_settings(settings)
-            st.session_state["settings"] = settings
-            st.success(f"'{del_folder}' 분야가 삭제되었습니다.")
-            st.rerun()
-
-    st.divider()
-
-    # ── 3. 분야별 설정 편집 ──
-    edit_folder = st.selectbox(
-        "편집할 분야 선택", sm.get_folder_names(settings), key="edit_folder_select"
-    )
-
-    if edit_folder:
-        cur_criteria = sm.get_criteria(settings, edit_folder)
-        cur_feeds = sm.get_feeds(settings, edit_folder)
-
-        # ── 3a. 선별 기준 편집 ──
-        with st.expander(f"선별 기준 편집 — {edit_folder}", expanded=False):
-            new_top_n = st.number_input(
-                "상위 N개 선별",
-                min_value=5, max_value=100,
-                value=cur_criteria.get("top_n", 20),
-                key=f"topn_{edit_folder}",
-            )
-
-            new_desc = st.text_area(
-                "분야 설명 (AI 스코어링용, 영문 권장)",
-                value=cur_criteria.get("description", ""),
-                height=100,
-                key=f"desc_{edit_folder}",
-            )
-
-            new_kw_kr = st.text_area(
-                "한국어 키워드 (줄바꿈으로 구분)",
-                value="\n".join(cur_criteria.get("keywords", [])),
-                height=150,
-                key=f"kw_kr_{edit_folder}",
-            )
-
-            new_kw_en = st.text_area(
-                "영어 키워드 (줄바꿈으로 구분)",
-                value="\n".join(cur_criteria.get("keywords_en", [])),
-                height=150,
-                key=f"kw_en_{edit_folder}",
-            )
-
-            new_neg_kw = st.text_area(
-                "부정 키워드 (줄바꿈으로 구분)",
-                value="\n".join(cur_criteria.get("negative_keywords", [])),
-                height=100,
-                key=f"neg_kw_{edit_folder}",
-            )
-
-            if st.button("선별 기준 저장", key=f"btn_save_criteria_{edit_folder}"):
-                updated = {
-                    "top_n": new_top_n,
-                    "description": new_desc.strip(),
-                    "keywords": [k.strip() for k in new_kw_kr.strip().split("\n") if k.strip()],
-                    "keywords_en": [k.strip() for k in new_kw_en.strip().split("\n") if k.strip()],
-                    "negative_keywords": [k.strip() for k in new_neg_kw.strip().split("\n") if k.strip()],
-                    "country_boost": cur_criteria.get("country_boost", {}),
-                }
-                settings = sm.update_criteria(settings, edit_folder, updated)
-                sm.save_settings(settings)
-                st.session_state["settings"] = settings
-                st.success("선별 기준이 저장되었습니다.")
-                st.rerun()
-
-        # ── 3b. RSS 피드 관리 ──
-        with st.expander(f"RSS 피드 관리 — {edit_folder}", expanded=False):
-            # 현재 피드 목록
-            if cur_feeds:
-                st.write(f"등록된 피드: **{len(cur_feeds)}개**")
-                for fi, feed in enumerate(cur_feeds):
-                    col_name, col_del = st.columns([4, 1])
-                    with col_name:
-                        st.caption(f"{feed.get('name', '')} — {feed.get('url', '')[:60]}...")
-                    with col_del:
-                        if st.button("삭제", key=f"btn_del_feed_{edit_folder}_{fi}"):
-                            settings = sm.delete_feed(settings, edit_folder, fi)
-                            sm.save_settings(settings)
-                            st.session_state["settings"] = settings
-                            st.rerun()
-            else:
-                st.info("등록된 RSS 피드가 없습니다.")
-
-            # 새 피드 추가
-            st.write("---")
-            st.write("**새 RSS 피드 추가**")
-            new_feed_name = st.text_input(
-                "피드 이름", key=f"new_feed_name_{edit_folder}",
-                placeholder="예: FDA approval news",
-            )
-            new_feed_url = st.text_input(
-                "RSS URL", key=f"new_feed_url_{edit_folder}",
-                placeholder="https://www.google.co.kr/alerts/feeds/...",
-            )
-            if st.button("피드 추가", key=f"btn_add_feed_{edit_folder}") and new_feed_url.strip():
-                fname = new_feed_name.strip() or "새 피드"
-                settings = sm.add_feed(settings, edit_folder, fname, new_feed_url.strip())
-                sm.save_settings(settings)
-                st.session_state["settings"] = settings
-                st.success(f"'{fname}' 피드가 추가되었습니다.")
-                st.rerun()
