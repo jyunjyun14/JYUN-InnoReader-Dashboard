@@ -2,4 +2,6 @@
 .inoreader_token.json
 __pycache__/
 *.pyc
-.streamlit/
+.streamlit/secrets.toml
+settings.json
+nul

@@ -230,24 +230,41 @@ SCORING_CRITERIA = {
             "general retail/e-commerce news, food industry."
         ),
         "keywords": [
-            "뷰티테크", "뷰티 테크", "beauty tech",
-            "기술동향", "기술 동향",
-            "기업동향", "기업 동향", "대기업",
-            "화장품 성분", "화장품성분", "성분 규제",
-            "연구동향", "연구 동향",
+            "화장품 성분", "화장품성분", "화장품 원료", "화장품원료",
+            "기능성 원료", "기능성원료", "성분 연구", "성분연구", "원료 연구",
+            "성분 규제", "성분규제", "기능성 화장품", "기능성화장품",
+            "뷰티테크", "뷰티 테크", "화장품 기술", "화장품기술",
+            "화장품 연구", "화장품연구", "화장품 개발",
+            "기술동향", "기술 동향", "연구동향", "연구 동향",
+            "기업동향", "기업 동향",
+            "피부과학", "코스메슈티컬", "맞춤형 화장품", "맞춤형화장품",
+            "피부장벽", "항산화", "펩타이드", "히알루론산",
+            "레티놀", "나이아신아마이드", "세라마이드",
+            "제형", "유효성분", "활성성분",
             "K-뷰티", "K뷰티", "K-beauty",
             "클린뷰티", "클린 뷰티", "비건", "지속가능",
         ],
         "keywords_en": [
-            "K-beauty", "Korean beauty", "Korean cosmetics",
+            "cosmetic ingredient", "active ingredient",
+            "skincare ingredient", "new ingredient", "ingredient research",
+            "cosmetic research", "cosmetic science",
+            "cosmetic formulation", "formulation technology",
+            "cosmetic regulation",
             "beauty tech", "beauty technology",
-            "cosmetic ingredient", "cosmetic regulation",
+            "cosmetic technology", "beauty innovation",
+            "cosmetic innovation", "skincare innovation",
+            "cosmeceutical",
+            "peptide", "hyaluronic acid", "retinol",
+            "niacinamide", "ceramide",
+            "skin barrier", "antioxidant", "anti-aging",
+            "personalized beauty",
+            "K-beauty", "Korean beauty", "Korean cosmetics",
             "clean beauty", "vegan beauty", "sustainable beauty",
-            "skincare innovation", "beauty trend",
+            "beauty trend", "skincare trend",
         ],
         "negative_keywords": [
             "성형", "plastic surgery", "cosmetic surgery",
-            "패션", "fashion week",
+            "패션", "fashion week", "부동산", "real estate",
         ],
         "country_boost": {},
     },
@@ -463,6 +480,18 @@ def select_top_articles(articles: list[dict], folder_name: str, settings: dict =
         scored.append(entry)
 
     scored.sort(key=lambda x: x["score"], reverse=True)
+
+    # 중복 제거 (제목 기준, 점수 높은 것 유지 — 이미 정렬됨)
+    seen_titles: set[str] = set()
+    deduped = []
+    for entry in scored:
+        title_key = entry.get("title", "").strip().lower()
+        if title_key and title_key in seen_titles:
+            continue
+        if title_key:
+            seen_titles.add(title_key)
+        deduped.append(entry)
+    scored = deduped
 
     # 키워드 점수 기준 상위 선별 (LLM 입력용, 여유분 포함)
     candidates = scored[:top_n * 2] if LLM_SCORING_ENABLED else scored[:top_n]

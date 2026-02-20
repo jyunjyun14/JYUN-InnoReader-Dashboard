@@ -1,9 +1,12 @@
 import datetime
 import logging
 import re
+from urllib.parse import unquote
 
 import pandas as pd
+import requests
 import streamlit as st
+from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
 from rss_fetcher import fetch_folder_articles, fetch_keyword_search_articles
@@ -271,7 +274,7 @@ with st.sidebar:
                             settings = sm.update_search_queries(settings, edit_folder, cur_queries)
                             sm.save_settings(settings)
                             st.session_state["settings"] = settings
-                            st.rerun()
+                            st.toast(f"검색어가 삭제되었습니다. 새로고침 시 반영됩니다.")
             else:
                 st.info("검색어 미등록 시 스코어링 키워드에서 자동 생성됩니다.")
 
@@ -289,8 +292,7 @@ with st.sidebar:
                 settings = sm.update_search_queries(settings, edit_folder, new_queries)
                 sm.save_settings(settings)
                 st.session_state["settings"] = settings
-                st.success(f"{len(suggested)}개 추천 검색어가 추가되었습니다.")
-                st.rerun()
+                st.toast(f"{len(suggested)}개 추천 검색어 추가됨. 새로고침 시 반영됩니다.")
 
             if suggested:
                 st.caption(f"추천 검색어: {', '.join(suggested)}")
@@ -306,7 +308,7 @@ with st.sidebar:
                 settings = sm.update_search_queries(settings, edit_folder, cur_queries)
                 sm.save_settings(settings)
                 st.session_state["settings"] = settings
-                st.success(f"'{new_query.strip()}' 검색어가 추가되었습니다.")
+                st.toast(f"'{new_query.strip()}' 검색어 추가됨. 새로고침 시 반영됩니다.")
                 st.rerun()
 
 # ── Google Translate 헬퍼 ──
@@ -343,6 +345,54 @@ def _extract_3_sentences(text: str) -> str:
     if result and result[-1] not in ".!?。":
         result += "."
     return result
+
+
+def _resolve_google_url(url: str) -> str:
+    """Google redirect URL에서 실제 기사 URL을 추출."""
+    if "google.com/url" in url and "url=" in url:
+        real_url = url.split("url=")[1].split("&")[0]
+        return unquote(real_url)
+    return url
+
+
+def _fetch_article_text(url: str, max_chars: int = 3000) -> str:
+    """URL에서 기사 본문 텍스트를 추출 (requests + BeautifulSoup)."""
+    try:
+        resolved_url = _resolve_google_url(url)
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        }
+        resp = requests.get(resolved_url, headers=headers, timeout=10, allow_redirects=True)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # 비본문 요소 제거
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe"]):
+            tag.decompose()
+
+        # <article> 또는 본문 영역 우선 탐색
+        article_el = soup.find("article") or soup.find(
+            class_=re.compile(r"article|story|content|post-body", re.I)
+        )
+        target = article_el if article_el else soup
+
+        # <p> 태그에서 본문 추출 (짧은 네비게이션 텍스트 제외)
+        paragraphs = target.find_all("p")
+        text_parts = []
+        for p in paragraphs:
+            text = p.get_text(strip=True)
+            if len(text) > 30:
+                text_parts.append(text)
+
+        full_text = " ".join(text_parts)
+        return full_text[:max_chars] if full_text else ""
+    except Exception:
+        return ""
 
 
 # ── 국가 감지 (URL 도메인 + 텍스트 키워드) ──
@@ -448,10 +498,16 @@ def _build_excel_rows(articles: list[dict], progress_callback=None) -> list[dict
                 translated_tags.append(f"#{kw_kr.replace(' ', '_')}")
             kw3 = " ".join(translated_tags) if translated_tags else ""
 
-        # ── 주요내용: AI 3문장 → 번역 후 3문장 추출
+        # ── 주요내용: AI 3문장 → 기사 본문에서 3문장 추출
         main_content = a.get("summary_3sent", "")
         if not main_content:
-            translated = a.get("summary_kr", "") or _translate_ko(summary_orig)
+            # RSS 요약이 짧으면(200자 미만) 실제 기사 본문을 가져와서 3문장 추출
+            source_text = summary_orig
+            if len(summary_orig) < 200 and a.get("url"):
+                full_text = _fetch_article_text(a["url"])
+                if full_text and len(full_text) > len(summary_orig):
+                    source_text = full_text
+            translated = _translate_ko(source_text[:2000])
             main_content = _extract_3_sentences(translated)
 
         # ── 추천기준
@@ -505,7 +561,10 @@ with col_d2:
     sel_end = st.date_input("종료일", value=min(last_sunday, today), key="sel_end")
 with col_btn:
     st.write("")  # spacing for alignment
-    do_refresh = st.button("새로 수집", key="btn_refresh")
+    if st.button("전체 새로 수집", key="btn_refresh"):
+        for key in list(st.session_state.keys()):
+            if key.startswith("cache_"):
+                del st.session_state[key]
 
 sel_newer = int(datetime.datetime.combine(sel_start, datetime.time.min).timestamp())
 sel_older = int(datetime.datetime.combine(sel_end, datetime.time.max).timestamp())
@@ -514,11 +573,16 @@ sel_older = int(datetime.datetime.combine(sel_end, datetime.time.max).timestamp(
 target_folders = sm.get_folder_names(settings)
 date_key = f"{sel_start}_{sel_end}"
 
-# ── 캐시 무효화: 새로 수집 버튼 또는 날짜 변경 ──
-if do_refresh:
-    for key in list(st.session_state.keys()):
-        if key.startswith("cache_"):
-            del st.session_state[key]
+# ── 분야별 캐시 무효화 처리 ──
+_folder_refresh_key = st.session_state.get("_refresh_folder")
+if _folder_refresh_key:
+    cache_key = f"cache_{_folder_refresh_key}_{date_key}"
+    if cache_key in st.session_state:
+        del st.session_state[cache_key]
+    # 관련 엑셀 캐시도 제거
+    for k in [f"excel_{_folder_refresh_key}", f"excel_count_{_folder_refresh_key}"]:
+        st.session_state.pop(k, None)
+    del st.session_state["_refresh_folder"]
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 1: 데이터 수집 (캐시 미스 시에만 실행 — 느린 작업)
@@ -639,7 +703,16 @@ for folder_idx, folder_name in enumerate(target_folders):
     with folder_tabs[folder_idx]:
         criteria = get_criteria_for_folder(folder_name, settings)
         kw_preview = criteria.get("keywords", [])[:4] + criteria.get("keywords_en", [])[:3]
-        st.info(f"선별 기준: 상위 **{criteria['top_n']}개** | 키워드: {', '.join(kw_preview)}...")
+
+        # ── 분야별 새로고침 버튼 ──
+        col_info, col_refresh = st.columns([6, 1])
+        with col_info:
+            st.info(f"선별 기준: 상위 **{criteria['top_n']}개** | 키워드: {', '.join(kw_preview)}...")
+        with col_refresh:
+            st.write("")  # spacing
+            if st.button("새로고침", key=f"btn_refresh_{folder_name}"):
+                st.session_state["_refresh_folder"] = folder_name
+                st.rerun()
 
         # ── 캐시에서 데이터 읽기 ──
         cached = st.session_state.get(f"cache_{folder_name}_{date_key}")
@@ -782,9 +855,9 @@ for folder_idx, folder_name in enumerate(target_folders):
                     except Exception:
                         pass
 
-                pb = st.progress(0, text="번역 및 엑셀 생성 중...")
+                pb = st.progress(0, text="기사 본문 수집 및 번역 중...")
                 def _update_pb(cur, tot):
-                    pb.progress(cur / max(tot, 1), text=f"번역 중... ({cur}/{tot}건)")
+                    pb.progress(cur / max(tot, 1), text=f"기사 본문 수집/번역 중... ({cur}/{tot}건)")
                 rows = _build_excel_rows(export_list, progress_callback=_update_pb)
                 pb.progress(1.0, text="완료!")
                 df = pd.DataFrame(rows)
@@ -846,7 +919,7 @@ if total_selected > 0:
             def _update_all(cur, tot):
                 progress_bar.progress(
                     (done + cur / max(tot, 1)) / max(folder_count, 1),
-                    text=f"'{fn}' 번역 중... ({cur}/{tot}건)",
+                    text=f"'{fn}' 기사 본문 수집/번역 중... ({cur}/{tot}건)",
                 )
             rows = _build_excel_rows(export_list, progress_callback=_update_all)
             analyzed_sheets[fn] = pd.DataFrame(rows)
