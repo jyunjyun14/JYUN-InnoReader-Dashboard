@@ -99,6 +99,7 @@ def add_folder(settings: dict, folder_name: str) -> dict:
                 "country_boost": {},
             },
             "feeds": [],
+            "search_queries": [],
         }
     return settings
 
@@ -132,4 +133,17 @@ def delete_feed(settings: dict, folder_name: str, feed_idx: int) -> dict:
         if 0 <= feed_idx < len(feeds):
             feeds.pop(feed_idx)
         settings["folders"][folder_name]["feeds"] = feeds
+    return settings
+
+
+def get_search_queries(settings: dict, folder_name: str) -> list[str]:
+    """특정 폴더의 Google News 검색어 목록 반환."""
+    folder = settings.get("folders", {}).get(folder_name, {})
+    return folder.get("search_queries", [])
+
+
+def update_search_queries(settings: dict, folder_name: str, queries: list[str]) -> dict:
+    """폴더의 Google News 검색어 목록 업데이트."""
+    if folder_name in settings.get("folders", {}):
+        settings["folders"][folder_name]["search_queries"] = queries
     return settings

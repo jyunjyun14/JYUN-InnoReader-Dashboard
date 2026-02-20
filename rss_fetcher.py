@@ -2,9 +2,10 @@
 
 import calendar
 import re
+import time
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, quote
 
 import feedparser
 
@@ -151,5 +152,79 @@ def fetch_folder_articles(
         except Exception:
             # 개별 피드 실패 시 건너뜀 (호출 측에서 경고 표시)
             continue
+
+    return all_articles
+
+
+def _is_korean(text: str) -> bool:
+    """텍스트에 한국어가 포함되어 있는지 판별."""
+    korean_chars = sum(1 for c in text if '\uac00' <= c <= '\ud7a3')
+    return korean_chars / max(len(text), 1) > 0.3
+
+
+def fetch_google_news_articles(
+    query: str,
+    newer_than: Optional[int] = None,
+    older_than: Optional[int] = None,
+) -> list[dict]:
+    """
+    Google News RSS 검색으로 기사를 수집.
+
+    Args:
+        query: 검색어
+        newer_than: 이 Unix timestamp 이후의 기사만 포함 (선택)
+        older_than: 이 Unix timestamp 이전의 기사만 포함 (선택)
+
+    Returns:
+        기사 dict 리스트
+    """
+    encoded_query = quote(query)
+
+    if _is_korean(query):
+        url = (
+            f"https://news.google.com/rss/search?"
+            f"q={encoded_query}+when:14d&hl=ko&gl=KR&ceid=KR:ko"
+        )
+    else:
+        url = (
+            f"https://news.google.com/rss/search?"
+            f"q={encoded_query}+when:14d&hl=en&gl=US&ceid=US:en"
+        )
+
+    return fetch_rss_articles(url, newer_than, older_than)
+
+
+def fetch_keyword_search_articles(
+    search_queries: list[str],
+    newer_than: Optional[int] = None,
+    older_than: Optional[int] = None,
+) -> list[dict]:
+    """
+    여러 검색어로 Google News를 검색하여 기사를 수집.
+
+    Args:
+        search_queries: 검색어 리스트
+        newer_than: 이 Unix timestamp 이후의 기사만 포함 (선택)
+        older_than: 이 Unix timestamp 이전의 기사만 포함 (선택)
+
+    Returns:
+        중복 제거된 기사 dict 리스트
+    """
+    all_articles: list[dict] = []
+    seen_titles: set[str] = set()
+
+    for query in search_queries:
+        if not query.strip():
+            continue
+        try:
+            articles = fetch_google_news_articles(query.strip(), newer_than, older_than)
+            for art in articles:
+                title_key = art.get("title", "").strip().lower()
+                if title_key and title_key not in seen_titles:
+                    seen_titles.add(title_key)
+                    all_articles.append(art)
+        except Exception:
+            continue
+        time.sleep(0.5)
 
     return all_articles

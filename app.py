@@ -1,11 +1,12 @@
 import datetime
 import logging
+import re
 
 import pandas as pd
 import streamlit as st
 from deep_translator import GoogleTranslator
 
-from rss_fetcher import fetch_folder_articles
+from rss_fetcher import fetch_folder_articles, fetch_keyword_search_articles
 from config import LLM_SCORING_ENABLED
 from scorer import get_criteria_for_folder, select_top_articles
 from utils import dataframes_to_excel
@@ -14,6 +15,97 @@ import settings_manager as sm
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="바이오헬스 주간동향", layout="wide")
+
+# ── 커스텀 테마 CSS ──
+st.markdown("""
+<style>
+/* 탭 스타일 */
+div[data-baseweb="tab-list"] {
+    background-color: #F0DEFE;
+    border-radius: 8px;
+    padding: 4px;
+}
+div[data-baseweb="tab-list"] button[aria-selected="true"] {
+    background-color: #E3C3FD;
+    border-radius: 6px;
+    font-weight: 700;
+}
+
+/* 사이드바 */
+section[data-testid="stSidebar"] {
+    background-color: #F0DEFE;
+}
+section[data-testid="stSidebar"] .stExpander {
+    background-color: #FFFFFF;
+    border-radius: 8px;
+}
+
+/* 상단 타이틀 */
+h1 {
+    color: #6B21A8;
+}
+h2, h3 {
+    color: #7C3AED;
+}
+
+/* 버튼 */
+div.stButton > button {
+    background-color: #E3C3FD;
+    color: #1E1E1E;
+    border: 1px solid #D4A0F7;
+    border-radius: 6px;
+}
+div.stButton > button:hover {
+    background-color: #D4A0F7;
+    border-color: #B57EE0;
+}
+
+/* info 박스 */
+div[data-testid="stAlert"] {
+    background-color: #FEF7DE;
+    border-left-color: #E3C3FD;
+    border-radius: 6px;
+}
+
+/* 슬라이더 */
+div[data-testid="stSlider"] > div > div > div[role="slider"] {
+    background-color: #9B59B6;
+}
+
+/* 프로그레스바 */
+div[data-testid="stProgress"] > div > div > div {
+    background-color: #E3C3FD;
+}
+
+/* 체크박스 */
+span[data-testid="stCheckbox"] label span[aria-checked="true"] {
+    background-color: #9B59B6;
+    border-color: #9B59B6;
+}
+
+/* expander 헤더 */
+details summary {
+    background-color: #FEF7DE;
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+
+/* 다운로드 버튼 */
+div.stDownloadButton > button {
+    background-color: #9B59B6;
+    color: white;
+    border: none;
+}
+div.stDownloadButton > button:hover {
+    background-color: #7C3AED;
+}
+
+/* divider */
+hr {
+    border-color: #E3C3FD;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ── 설정 로드 ──
 if "settings" not in st.session_state:
@@ -163,6 +255,60 @@ with st.sidebar:
                 st.success(f"'{fname}' 피드가 추가되었습니다.")
                 st.rerun()
 
+        # ── 3c. 구글 뉴스 검색 키워드 관리 ──
+        with st.expander(f"구글 뉴스 검색 키워드 — {edit_folder}", expanded=False):
+            cur_queries = sm.get_search_queries(settings, edit_folder)
+
+            if cur_queries:
+                st.write(f"등록된 검색어: **{len(cur_queries)}개**")
+                for qi, q in enumerate(cur_queries):
+                    col_q, col_qdel = st.columns([4, 1])
+                    with col_q:
+                        st.caption(q)
+                    with col_qdel:
+                        if st.button("삭제", key=f"btn_del_q_{edit_folder}_{qi}"):
+                            cur_queries.pop(qi)
+                            settings = sm.update_search_queries(settings, edit_folder, cur_queries)
+                            sm.save_settings(settings)
+                            st.session_state["settings"] = settings
+                            st.rerun()
+            else:
+                st.info("검색어 미등록 시 스코어링 키워드에서 자동 생성됩니다.")
+
+            # ── 추천 검색어 자동 추가 ──
+            edit_criteria = sm.get_criteria(settings, edit_folder)
+            suggest_kr = edit_criteria.get("keywords", [])[:3]
+            suggest_en = edit_criteria.get("keywords_en", [])[:3]
+            suggested = suggest_kr + suggest_en
+            # 이미 등록된 검색어 제외
+            suggested = [s for s in suggested if s not in cur_queries]
+
+            if suggested and st.button("추천 검색어 자동 추가", key=f"btn_suggest_q_{edit_folder}",
+                                       help="스코어링 키워드에서 상위 검색어를 자동 추가합니다"):
+                new_queries = list(cur_queries) + suggested
+                settings = sm.update_search_queries(settings, edit_folder, new_queries)
+                sm.save_settings(settings)
+                st.session_state["settings"] = settings
+                st.success(f"{len(suggested)}개 추천 검색어가 추가되었습니다.")
+                st.rerun()
+
+            if suggested:
+                st.caption(f"추천 검색어: {', '.join(suggested)}")
+
+            st.write("---")
+            st.write("**새 검색어 추가**")
+            new_query = st.text_input(
+                "검색어", key=f"new_query_{edit_folder}",
+                placeholder="예: cosmetic ingredient research",
+            )
+            if st.button("검색어 추가", key=f"btn_add_q_{edit_folder}") and new_query.strip():
+                cur_queries.append(new_query.strip())
+                settings = sm.update_search_queries(settings, edit_folder, cur_queries)
+                sm.save_settings(settings)
+                st.session_state["settings"] = settings
+                st.success(f"'{new_query.strip()}' 검색어가 추가되었습니다.")
+                st.rerun()
+
 # ── Google Translate 헬퍼 ──
 _translator = GoogleTranslator(source="auto", target="ko")
 
@@ -180,6 +326,23 @@ def _translate_ko(text: str, max_len: int = 4500) -> str:
     except Exception as e:
         logger.warning("번역 실패: %s", e)
         return text
+
+
+def _extract_3_sentences(text: str) -> str:
+    """텍스트에서 최대 3문장을 추출. 문장이 부족하면 있는 만큼 반환."""
+    if not text or not text.strip():
+        return text
+    # 문장 분리: 마침표/느낌표/물음표 + 공백 또는 줄바꿈 기준
+    sentences = re.split(r'(?<=[.!?。])\s+', text.strip())
+    # 빈 문장 제거
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences:
+        return text
+    result = " ".join(sentences[:3])
+    # 마지막에 마침표가 없으면 추가
+    if result and result[-1] not in ".!?。":
+        result += "."
+    return result
 
 
 # ── 국가 감지 (URL 도메인 + 텍스트 키워드) ──
@@ -285,12 +448,11 @@ def _build_excel_rows(articles: list[dict], progress_callback=None) -> list[dict
                 translated_tags.append(f"#{kw_kr.replace(' ', '_')}")
             kw3 = " ".join(translated_tags) if translated_tags else ""
 
-        # ── 주요내용: AI 3문장 → 한국어 요약 → 원문 번역
+        # ── 주요내용: AI 3문장 → 번역 후 3문장 추출
         main_content = a.get("summary_3sent", "")
         if not main_content:
-            main_content = a.get("summary_kr", "")
-        if not main_content:
-            main_content = _translate_ko(summary_orig)
+            translated = a.get("summary_kr", "") or _translate_ko(summary_orig)
+            main_content = _extract_3_sentences(translated)
 
         # ── 추천기준
         kw_score = a.get("keyword_score", 0)
@@ -336,22 +498,140 @@ days_since_monday = today.weekday()  # 0=월
 last_monday = today - datetime.timedelta(days=days_since_monday)
 last_sunday = last_monday + datetime.timedelta(days=6)
 
-col_d1, col_d2 = st.columns(2)
+col_d1, col_d2, col_btn = st.columns([2, 2, 2])
 with col_d1:
     sel_start = st.date_input("시작일", value=last_monday, key="sel_start")
 with col_d2:
     sel_end = st.date_input("종료일", value=min(last_sunday, today), key="sel_end")
+with col_btn:
+    st.write("")  # spacing for alignment
+    do_refresh = st.button("새로 수집", key="btn_refresh")
 
 sel_newer = int(datetime.datetime.combine(sel_start, datetime.time.min).timestamp())
 sel_older = int(datetime.datetime.combine(sel_end, datetime.time.max).timestamp())
 
 # 스코어링 대상 폴더 (settings.json 기준)
 target_folders = sm.get_folder_names(settings)
+date_key = f"{sel_start}_{sel_end}"
 
-# ── 폴더별 탭 ──
+# ── 캐시 무효화: 새로 수집 버튼 또는 날짜 변경 ──
+if do_refresh:
+    for key in list(st.session_state.keys()):
+        if key.startswith("cache_"):
+            del st.session_state[key]
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 1: 데이터 수집 (캐시 미스 시에만 실행 — 느린 작업)
+# ═══════════════════════════════════════════════════════════════
+
+folders_to_fetch = [
+    fn for fn in target_folders
+    if f"cache_{fn}_{date_key}" not in st.session_state
+]
+
+if folders_to_fetch:
+    _fetch_progress = st.progress(0, text="기사 수집 준비 중...")
+
+    for _fi, _fn in enumerate(folders_to_fetch):
+        _fetch_progress.progress(
+            _fi / len(folders_to_fetch),
+            text=f"'{_fn}' 수집 중... ({_fi + 1}/{len(folders_to_fetch)})",
+        )
+
+        # ── 피드 & 검색어 ──
+        _feed_list = sm.get_feeds(settings, _fn)
+        _search_queries = sm.get_search_queries(settings, _fn)
+
+        # 검색어 미등록 시 → 스코어링 키워드에서 자동 생성
+        if not _search_queries:
+            _c = sm.get_criteria(settings, _fn)
+            _search_queries = _c.get("keywords", [])[:3] + _c.get("keywords_en", [])[:3]
+
+        if not _feed_list and not _search_queries:
+            st.session_state[f"cache_{_fn}_{date_key}"] = {
+                "top_articles": [], "rss_count": 0,
+                "search_count": 0, "total_count": 0,
+                "search_queries_used": [],
+            }
+            continue
+
+        # ── RSS 피드 수집 ──
+        _folder_articles: list[dict] = []
+        _rss_count = 0
+        _search_count = 0
+
+        if _feed_list:
+            _folder_articles = fetch_folder_articles(
+                _fn, newer_than=sel_newer, older_than=sel_older, feed_list=_feed_list
+            )
+            _rss_count = len(_folder_articles)
+
+        # ── Google News 키워드 검색 수집 ──
+        if _search_queries:
+            _search_articles = fetch_keyword_search_articles(
+                _search_queries, newer_than=sel_newer, older_than=sel_older
+            )
+            _existing_titles = {a.get("title", "").strip().lower() for a in _folder_articles}
+            for _art in _search_articles:
+                _title_key = _art.get("title", "").strip().lower()
+                if _title_key and _title_key not in _existing_titles:
+                    _existing_titles.add(_title_key)
+                    _folder_articles.append(_art)
+                    _search_count += 1
+
+        if not _folder_articles:
+            st.session_state[f"cache_{_fn}_{date_key}"] = {
+                "top_articles": [], "rss_count": _rss_count,
+                "search_count": _search_count, "total_count": 0,
+                "search_queries_used": _search_queries,
+            }
+            continue
+
+        # ── 스코어링 ──
+        _top = select_top_articles(_folder_articles, _fn, settings)
+
+        if not _top:
+            st.session_state[f"cache_{_fn}_{date_key}"] = {
+                "top_articles": [], "rss_count": _rss_count,
+                "search_count": _search_count,
+                "total_count": len(_folder_articles),
+                "search_queries_used": _search_queries,
+            }
+            continue
+
+        # ── 번역 (Google Translate) ──
+        for _art in _top:
+            if not _art.get("title_kr"):
+                _art["title_kr"] = _translate_ko(_art.get("title", ""))
+            if not _art.get("summary_kr"):
+                _art["summary_kr"] = _translate_ko((_art.get("summary") or "")[:800])
+
+        # ── LLM 추가 번역 (Gemini 활성 시) ──
+        if LLM_SCORING_ENABLED:
+            try:
+                from llm_scorer import translate_summaries, _daily_quota_exhausted
+                if not _daily_quota_exhausted:
+                    _top = translate_summaries(_top)
+            except Exception:
+                pass
+
+        # ── 캐시 저장 ──
+        st.session_state[f"cache_{_fn}_{date_key}"] = {
+            "top_articles": _top,
+            "rss_count": _rss_count,
+            "search_count": _search_count,
+            "total_count": len(_folder_articles),
+            "search_queries_used": _search_queries,
+        }
+
+    _fetch_progress.progress(1.0, text="수집 완료!")
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 2: 표시 (캐시에서 읽기 — 빠름)
+# ═══════════════════════════════════════════════════════════════
+
 folder_tabs = st.tabs(target_folders)
 
-# session_state에 선택 상태 저장
 if "selected_articles" not in st.session_state:
     st.session_state["selected_articles"] = {}
 
@@ -361,82 +641,63 @@ for folder_idx, folder_name in enumerate(target_folders):
         kw_preview = criteria.get("keywords", [])[:4] + criteria.get("keywords_en", [])[:3]
         st.info(f"선별 기준: 상위 **{criteria['top_n']}개** | 키워드: {', '.join(kw_preview)}...")
 
-        # RSS 피드 설정 확인
-        feed_list = sm.get_feeds(settings, folder_name)
-        if not feed_list:
-            st.warning(f"'{folder_name}' 폴더에 RSS 피드 URL이 설정되지 않았습니다. `feeds.py`에서 URL을 추가해 주세요.")
+        # ── 캐시에서 데이터 읽기 ──
+        cached = st.session_state.get(f"cache_{folder_name}_{date_key}")
+        if not cached:
+            st.info("기사를 수집 중입니다... 잠시 후 새로고침해 주세요.")
             continue
 
-        # Google RSS로 기사 수집
-        folder_articles: list[dict] = []
-        with st.spinner(f"'{folder_name}' 기사 불러오는 중..."):
-            folder_articles = fetch_folder_articles(
-                folder_name, newer_than=sel_newer, older_than=sel_older, feed_list=feed_list
-            )
+        top_articles = cached["top_articles"]
+        rss_count = cached["rss_count"]
+        search_count = cached["search_count"]
+        total_count = cached["total_count"]
+        search_queries_used = cached.get("search_queries_used", [])
 
-        if not folder_articles:
+        if not top_articles:
             st.info("해당 기간에 기사가 없습니다.")
             continue
 
-        # 스코어링 & 선별
-        top_articles = select_top_articles(folder_articles, folder_name, settings)
-
-        if not top_articles:
-            st.info("스코어링 결과 선별된 기사가 없습니다.")
-            continue
-
-        # 한국어 번역 (Google Translate)
-        with st.spinner("기사 제목/요약 번역 중..."):
-            for art in top_articles:
-                if not art.get("title_kr"):
-                    art["title_kr"] = _translate_ko(art.get("title", ""))
-                if not art.get("summary_kr"):
-                    art["summary_kr"] = _translate_ko((art.get("summary") or "")[:800])
-
-        # LLM 추가 번역 (Gemini 활성 시)
-        if LLM_SCORING_ENABLED:
-            try:
-                from llm_scorer import translate_summaries, _daily_quota_exhausted
-                if not _daily_quota_exhausted:
-                    with st.spinner("AI 요약 생성 중..."):
-                        top_articles = translate_summaries(top_articles)
-            except Exception:
-                pass
-
-        # ── 점수 필터 ──
+        # ── 점수 필터 (동적 — 캐시 불필요) ──
         scores = [a.get("score", 0) for a in top_articles]
-        min_score = int(min(scores))
-        max_score = int(max(scores)) + 1
+        slider_max = max(int(max(scores)) + 1, 2)
 
         col_filter, col_count = st.columns([3, 5])
         with col_filter:
             score_threshold = st.slider(
                 "최소 점수 필터",
-                min_value=min_score,
-                max_value=max_score,
-                value=min_score,
+                min_value=1,
+                max_value=slider_max,
+                value=1,
                 step=1,
                 key=f"filter_{folder_name}",
                 help="설정한 점수 이상의 기사만 표시합니다.",
             )
 
-        # 필터 적용
         filtered_articles = [a for a in top_articles if a.get("score", 0) >= score_threshold]
 
         with col_count:
             st.write("")  # spacing
-            st.write(f"총 {len(folder_articles)}건 수집 → **{len(top_articles)}건** 스코어링 → **{len(filtered_articles)}건** 표시 (≥{score_threshold}점)")
+            source_detail = f"RSS {rss_count}건"
+            if search_count > 0:
+                source_detail += f" + 검색 {search_count}건"
+            st.write(
+                f"총 {total_count}건 수집 ({source_detail}) → "
+                f"**{len(top_articles)}건** 스코어링 → "
+                f"**{len(filtered_articles)}건** 표시 (≥{score_threshold}점)"
+            )
+
+        if search_queries_used:
+            st.caption(f"검색 키워드: {', '.join(search_queries_used)}")
 
         if not filtered_articles:
             st.info(f"{score_threshold}점 이상 기사가 없습니다. 필터를 낮춰 주세요.")
             continue
 
-        # 기본적으로 전부 선택
+        # ── 체크박스 상태 관리 ──
         state_key = f"sel_{folder_name}"
         if state_key not in st.session_state or len(st.session_state[state_key]) != len(filtered_articles):
             st.session_state[state_key] = [True] * len(filtered_articles)
 
-        # 전체 선택/해제 버튼
         col_all, col_none, _ = st.columns([1, 1, 6])
         with col_all:
             if st.button("전체 선택", key=f"all_{folder_name}"):
@@ -447,7 +708,7 @@ for folder_idx, folder_name in enumerate(target_folders):
                 st.session_state[state_key] = [False] * len(filtered_articles)
                 st.rerun()
 
-        # 기사 목록 + 체크박스
+        # ── 기사 목록 ──
         for i, article in enumerate(filtered_articles):
             col_chk, col_score, col_title = st.columns([0.5, 1, 10])
 
@@ -477,7 +738,6 @@ for folder_idx, folder_name in enumerate(target_folders):
                 matched_kws = article.get("matched_keywords", [])
                 kw_tags = " ".join(f"`{kw}`" for kw in matched_kws[:3]) if matched_kws else ""
 
-                # 한글 번역 제목을 메인으로, 원문은 작게
                 if title_kr and title_kr != article.get("title", ""):
                     st.write(f"**{title_kr}** — {source}{pub_str}")
                     st.caption(f"{article['title']}  {kw_tags}")
@@ -486,7 +746,6 @@ for folder_idx, folder_name in enumerate(target_folders):
                     if kw_tags:
                         st.caption(kw_tags)
 
-            # expander로 요약 확인
             with st.expander(f"요약 보기 — {(title_kr or article['title'])[:50]}", expanded=False):
                 summary_kr = article.get("summary_kr", "")
                 summary_orig = article.get("summary", "")
@@ -500,7 +759,7 @@ for folder_idx, folder_name in enumerate(target_folders):
                 if article.get("url"):
                     st.markdown(f"[원문 링크]({article['url']})")
 
-        # 선택된 기사를 session_state에 저장
+        # ── 선택 상태 저장 ──
         selected = [
             filtered_articles[i]
             for i in range(len(filtered_articles))
