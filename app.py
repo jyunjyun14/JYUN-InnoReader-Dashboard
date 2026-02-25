@@ -220,7 +220,7 @@ with st.sidebar:
                 settings = sm.update_criteria(settings, edit_folder, updated)
                 sm.save_settings(settings)
                 st.session_state["settings"] = settings
-                st.success("선별 기준이 저장되었습니다.")
+                st.success("선별 기준이 저장되었습니다. 각 분야의 새로고침 버튼을 눌러야 반영됩니다.")
                 st.rerun()
 
         # ── 3b. RSS 피드 관리 ──
@@ -565,32 +565,30 @@ with col_btn:
         for key in list(st.session_state.keys()):
             if key.startswith("cache_"):
                 del st.session_state[key]
+        st.rerun()
 
+# 날짜는 명시적 새로고침 시에만 반영 — 위젯 변경 자체는 재수집 안 함
 sel_newer = int(datetime.datetime.combine(sel_start, datetime.time.min).timestamp())
 sel_older = int(datetime.datetime.combine(sel_end, datetime.time.max).timestamp())
 
 # 스코어링 대상 폴더 (settings.json 기준)
 target_folders = sm.get_folder_names(settings)
-date_key = f"{sel_start}_{sel_end}"
 
 # ── 분야별 캐시 무효화 처리 ──
-_folder_refresh_key = st.session_state.get("_refresh_folder")
+# (새로고침 버튼 클릭 시에만 해당 분야 캐시 삭제)
+_folder_refresh_key = st.session_state.pop("_refresh_folder", None)
 if _folder_refresh_key:
-    cache_key = f"cache_{_folder_refresh_key}_{date_key}"
-    if cache_key in st.session_state:
-        del st.session_state[cache_key]
-    # 관련 엑셀 캐시도 제거
-    for k in [f"excel_{_folder_refresh_key}", f"excel_count_{_folder_refresh_key}"]:
-        st.session_state.pop(k, None)
-    del st.session_state["_refresh_folder"]
+    st.session_state.pop(f"cache_{_folder_refresh_key}", None)
+    st.session_state.pop(f"excel_{_folder_refresh_key}", None)
+    st.session_state.pop(f"excel_count_{_folder_refresh_key}", None)
 
 # ═══════════════════════════════════════════════════════════════
-# Phase 1: 데이터 수집 (캐시 미스 시에만 실행 — 느린 작업)
+# Phase 1: 데이터 수집 (캐시 없는 분야만 — 날짜/설정 변경은 무시)
 # ═══════════════════════════════════════════════════════════════
 
 folders_to_fetch = [
     fn for fn in target_folders
-    if f"cache_{fn}_{date_key}" not in st.session_state
+    if f"cache_{fn}" not in st.session_state
 ]
 
 if folders_to_fetch:
@@ -612,10 +610,11 @@ if folders_to_fetch:
             _search_queries = _c.get("keywords", [])[:3] + _c.get("keywords_en", [])[:3]
 
         if not _feed_list and not _search_queries:
-            st.session_state[f"cache_{_fn}_{date_key}"] = {
+            st.session_state[f"cache_{_fn}"] = {
                 "top_articles": [], "rss_count": 0,
                 "search_count": 0, "total_count": 0,
                 "search_queries_used": [],
+                "fetched_start": sel_start, "fetched_end": sel_end,
             }
             continue
 
@@ -644,10 +643,11 @@ if folders_to_fetch:
                     _search_count += 1
 
         if not _folder_articles:
-            st.session_state[f"cache_{_fn}_{date_key}"] = {
+            st.session_state[f"cache_{_fn}"] = {
                 "top_articles": [], "rss_count": _rss_count,
                 "search_count": _search_count, "total_count": 0,
                 "search_queries_used": _search_queries,
+                "fetched_start": sel_start, "fetched_end": sel_end,
             }
             continue
 
@@ -655,11 +655,12 @@ if folders_to_fetch:
         _top = select_top_articles(_folder_articles, _fn, settings)
 
         if not _top:
-            st.session_state[f"cache_{_fn}_{date_key}"] = {
+            st.session_state[f"cache_{_fn}"] = {
                 "top_articles": [], "rss_count": _rss_count,
                 "search_count": _search_count,
                 "total_count": len(_folder_articles),
                 "search_queries_used": _search_queries,
+                "fetched_start": sel_start, "fetched_end": sel_end,
             }
             continue
 
@@ -680,12 +681,13 @@ if folders_to_fetch:
                 pass
 
         # ── 캐시 저장 ──
-        st.session_state[f"cache_{_fn}_{date_key}"] = {
+        st.session_state[f"cache_{_fn}"] = {
             "top_articles": _top,
             "rss_count": _rss_count,
             "search_count": _search_count,
             "total_count": len(_folder_articles),
             "search_queries_used": _search_queries,
+            "fetched_start": sel_start, "fetched_end": sel_end,
         }
 
     _fetch_progress.progress(1.0, text="수집 완료!")
@@ -707,7 +709,14 @@ for folder_idx, folder_name in enumerate(target_folders):
         # ── 분야별 새로고침 버튼 ──
         col_info, col_refresh = st.columns([6, 1])
         with col_info:
-            st.info(f"선별 기준: 상위 **{criteria['top_n']}개** | 키워드: {', '.join(kw_preview)}...")
+            _cached_preview = st.session_state.get(f"cache_{folder_name}")
+            _date_label = ""
+            if _cached_preview:
+                _fs = _cached_preview.get("fetched_start", "")
+                _fe = _cached_preview.get("fetched_end", "")
+                if _fs and _fe:
+                    _date_label = f" | 수집 기간: {_fs} ~ {_fe}"
+            st.info(f"선별 기준: 상위 **{criteria['top_n']}개** | 키워드: {', '.join(kw_preview)}...{_date_label}")
         with col_refresh:
             st.write("")  # spacing
             if st.button("새로고침", key=f"btn_refresh_{folder_name}"):
@@ -715,7 +724,7 @@ for folder_idx, folder_name in enumerate(target_folders):
                 st.rerun()
 
         # ── 캐시에서 데이터 읽기 ──
-        cached = st.session_state.get(f"cache_{folder_name}_{date_key}")
+        cached = st.session_state.get(f"cache_{folder_name}")
         if not cached:
             st.info("기사를 수집 중입니다... 잠시 후 새로고침해 주세요.")
             continue
