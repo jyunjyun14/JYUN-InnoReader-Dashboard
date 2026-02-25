@@ -11,8 +11,9 @@ const nextConfig = {
   },
 
   // Prisma + bcryptjs를 서버 번들에서 제외 (Vercel 서버리스 호환)
-  // Next.js 14.0+ 정식 키 (experimental.serverComponentsExternalPackages 대체)
-  serverExternalPackages: ['@prisma/client', 'bcryptjs'],
+  experimental: {
+    serverComponentsExternalPackages: ['@prisma/client', 'bcryptjs'],
+  },
 }
 
 export default nextConfig

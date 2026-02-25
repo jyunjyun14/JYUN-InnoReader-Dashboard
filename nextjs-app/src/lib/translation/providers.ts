@@ -111,8 +111,7 @@ async function gtxSingle(text: string, targetLang: string): Promise<ProviderOutp
   // 응답: [[[segment, original, ...], ...], null, "detected_lang", ...]
   const raw: [[string, string][]] = await res.json()
   const translated = (raw[0] ?? []).map(([seg]) => seg ?? '').join('')
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sourceLang = typeof (raw as any)[2] === 'string' ? (raw as any)[2] : 'auto'
+  const sourceLang = typeof (raw as unknown[])[2] === 'string' ? (raw as unknown[])[2] as string : 'auto'
 
   return { translated, sourceLang }
 }
