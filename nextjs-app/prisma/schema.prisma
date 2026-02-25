@@ -25,14 +25,15 @@ model User {
 }
 
 model Category {
-  id        String    @id @default(cuid())
-  userId    String
-  name      String
-  color     String    @default("violet")
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  keywords  Keyword[]
+  id              String    @id @default(cuid())
+  userId          String
+  name            String
+  color           String    @default("violet")
+  excludeKeywords String    @default("[]") @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  keywords        Keyword[]
 
   @@index([userId])
 }

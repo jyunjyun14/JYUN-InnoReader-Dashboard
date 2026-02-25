@@ -14,16 +14,31 @@ export default async function ScoringPage() {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) redirect('/login')
 
-  const row = await prisma.scoringConfig.findUnique({
-    where: { userId: session.user.id },
-  })
+  const [scoringRow, rawCategories] = await Promise.all([
+    prisma.scoringConfig.findUnique({ where: { userId: session.user.id } }),
+    prisma.category.findMany({
+      where: { userId: session.user.id },
+      include: { keywords: { orderBy: { createdAt: 'asc' } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ])
 
-  const config = parseScoringConfig(row)
+  const config = parseScoringConfig(scoringRow)
 
   // sourceTiers가 비어있으면 기본 매체 티어 사용
   if (Object.keys(config.sourceTiers).length === 0) {
     config.sourceTiers = DEFAULT_SOURCE_TIERS
   }
 
-  return <ScoringClient initialConfig={config} />
+  const categories = rawCategories.map((cat) => ({
+    ...cat,
+    excludeKeywords: (() => {
+      try {
+        const parsed = JSON.parse(cat.excludeKeywords)
+        return Array.isArray(parsed) ? (parsed as string[]) : []
+      } catch { return [] as string[] }
+    })(),
+  }))
+
+  return <ScoringClient initialConfig={config} initialCategories={categories} />
 }

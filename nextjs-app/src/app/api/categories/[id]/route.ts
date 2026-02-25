@@ -10,7 +10,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     return NextResponse.json({ error: '인증이 필요합니다.' }, { status: 401 })
   }
 
-  const { name, color } = await req.json()
+  const { name, color, excludeKeywords } = await req.json()
 
   // 소유권 확인
   const existing = await prisma.category.findFirst({
@@ -25,6 +25,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     data: {
       ...(name?.trim() && { name: name.trim() }),
       ...(color && { color }),
+      ...(Array.isArray(excludeKeywords) && {
+        excludeKeywords: JSON.stringify(excludeKeywords.map(String).filter(Boolean)),
+      }),
     },
     include: { keywords: true },
   })

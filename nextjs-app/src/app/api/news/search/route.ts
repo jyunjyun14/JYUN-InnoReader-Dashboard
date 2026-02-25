@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
   const language = sp.get('language') ?? ''
   const startRaw = parseInt(sp.get('start') ?? '1', 10)
   const start = isNaN(startRaw) ? 1 : Math.max(1, startRaw)
+  const categoryIds = sp.get('categoryIds')?.split(',').filter(Boolean) ?? []
 
   // ── 유효성 검사 ──────────────────────────────────────────────
   if (!query) {
@@ -70,12 +71,29 @@ export async function GET(req: NextRequest) {
   const cacheParams = { query, country, language, dateRange, start }
 
   // ── 사용자 스코어링 설정 + 캐시 조회 병렬 실행 ───────────────
-  const [cached, scoringRow] = await Promise.all([
+  const [cached, scoringRow, catRows] = await Promise.all([
     getCachedSearch(cacheParams),
     prisma.scoringConfig.findUnique({ where: { userId: session.user.id } }),
+    categoryIds.length > 0
+      ? prisma.category.findMany({
+          where: { id: { in: categoryIds }, userId: session.user.id },
+          select: { excludeKeywords: true },
+        })
+      : Promise.resolve([]),
   ])
 
   const scoringConfig = parseScoringConfig(scoringRow)
+
+  // 분야별 제외 키워드 병합
+  const catExcludeKws = catRows.flatMap((c) => {
+    try {
+      const parsed = JSON.parse(c.excludeKeywords)
+      return Array.isArray(parsed) ? (parsed as string[]) : []
+    } catch { return [] }
+  })
+  const mergedConfig = catExcludeKws.length > 0
+    ? { ...scoringConfig, excludeKeywords: Array.from(new Set([...scoringConfig.excludeKeywords, ...catExcludeKws])) }
+    : scoringConfig
 
   // ── 캐시 히트 ────────────────────────────────────────────────
   if (cached) {
@@ -83,7 +101,7 @@ export async function GET(req: NextRequest) {
       (Date.now() - new Date(cached.cachedAt).getTime()) / 1000
     )
     // 캐시된 raw 결과에 사용자별 스코어링 적용
-    const scoredItems = applyScoring(cached.items, query, scoringConfig)
+    const scoredItems = applyScoring(cached.items, query, mergedConfig)
 
     return NextResponse.json(
       { ...cached, items: scoredItems, query, country, dateRange },
@@ -101,7 +119,7 @@ export async function GET(req: NextRequest) {
     )
 
     // 사용자별 스코어링 적용 후 반환
-    const scoredItems = applyScoring(result.items, query, scoringConfig)
+    const scoredItems = applyScoring(result.items, query, mergedConfig)
 
     return NextResponse.json(
       { ...result, items: scoredItems, cached: false, query, country, dateRange },

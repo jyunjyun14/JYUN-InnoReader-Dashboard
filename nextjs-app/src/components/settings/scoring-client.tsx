@@ -23,8 +23,17 @@ type WeightKey = 'weightKeyword' | 'weightPriority' | 'weightSource' | 'weightRe
 type Tab = 'weights' | 'priority' | 'exclude' | 'sources'
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
+interface CategoryWithExclude {
+  id: string
+  name: string
+  color: string
+  keywords: { id: string; term: string }[]
+  excludeKeywords: string[]
+}
+
 interface Props {
   initialConfig: ScoringConfig
+  initialCategories: CategoryWithExclude[]
 }
 
 // ── 프리뷰용 샘플 데이터 ───────────────────────────────────────
@@ -264,8 +273,9 @@ function BreakdownRow({ label, val, max, color }: { label: string; val: number; 
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
-export function ScoringClient({ initialConfig }: Props) {
+export function ScoringClient({ initialConfig, initialCategories }: Props) {
   const [config, setConfig] = useState<ScoringConfig>(initialConfig)
+  const [categories, setCategories] = useState<CategoryWithExclude[]>(initialCategories)
   const [tab,    setTab]    = useState<Tab>('weights')
   const [status, setStatus] = useState<SaveStatus>('idle')
 
@@ -350,7 +360,7 @@ export function ScoringClient({ initialConfig }: Props) {
           <div className="pt-5">
             {tab === 'weights'  && <WeightsTab  config={config} onChange={setConfig} />}
             {tab === 'priority' && <PriorityTab config={config} onChange={setConfig} />}
-            {tab === 'exclude'  && <ExcludeTab  config={config} onChange={setConfig} />}
+            {tab === 'exclude'  && <ExcludeTab  categories={categories} onCategoriesChange={setCategories} />}
             {tab === 'sources'  && <SourcesTab  config={config} onChange={setConfig} />}
           </div>
         </div>
@@ -537,53 +547,142 @@ function PriorityTab({ config, onChange }: { config: ScoringConfig; onChange: (c
   )
 }
 
-// ── 3. 제외 키워드 탭 ─────────────────────────────────────────
-function ExcludeTab({ config, onChange }: { config: ScoringConfig; onChange: (c: ScoringConfig) => void }) {
-  const [input, setInput] = useState('')
+// ── 3. 제외 키워드 탭 (분야별) ────────────────────────────────
+function ExcludeTab({
+  categories,
+  onCategoriesChange,
+}: {
+  categories: CategoryWithExclude[]
+  onCategoriesChange: (cats: CategoryWithExclude[]) => void
+}) {
+  if (categories.length === 0) {
+    return (
+      <div className="py-10 text-center text-sm text-muted-foreground">
+        분야가 없습니다.{' '}
+        <a href="/settings/keywords" className="text-primary hover:underline">
+          키워드 설정
+        </a>
+        에서 분야를 먼저 추가하세요.
+      </div>
+    )
+  }
 
-  function addKeyword() {
-    const t = input.trim()
-    if (!t || config.excludeKeywords.includes(t)) return
-    onChange({ ...config, excludeKeywords: [...config.excludeKeywords, t] })
-    setInput('')
+  function handleUpdate(categoryId: string, keywords: string[]) {
+    onCategoriesChange(
+      categories.map((c) => (c.id === categoryId ? { ...c, excludeKeywords: keywords } : c))
+    )
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        해당 키워드가 포함된 기사는 <strong className="text-destructive">−30점</strong> 감점됩니다 (비관련 기사 필터링).
+        분야별로 제외할 키워드를 설정합니다. 해당 키워드가 포함된 기사는{' '}
+        <strong className="text-destructive">−30점</strong> 감점됩니다.
       </p>
+      {categories.map((cat) => (
+        <CategoryExcludeSection
+          key={cat.id}
+          category={cat}
+          onUpdate={(kws) => handleUpdate(cat.id, kws)}
+        />
+      ))}
+    </div>
+  )
+}
 
+function CategoryExcludeSection({
+  category,
+  onUpdate,
+}: {
+  category: CategoryWithExclude
+  onUpdate: (keywords: string[]) => void
+}) {
+  const [input, setInput] = useState('')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  async function save(keywords: string[]) {
+    setSaveStatus('saving')
+    try {
+      const res = await fetch(`/api/categories/${category.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excludeKeywords: keywords }),
+      })
+      if (!res.ok) throw new Error()
+      onUpdate(keywords)
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    } catch {
+      setSaveStatus('error')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    }
+  }
+
+  function addKeyword() {
+    const t = input.trim()
+    if (!t || category.excludeKeywords.includes(t)) return
+    const next = [...category.excludeKeywords, t]
+    setInput('')
+    save(next)
+  }
+
+  function removeKeyword(kw: string) {
+    save(category.excludeKeywords.filter((k) => k !== kw))
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      {/* 분야 헤더 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={cn(
+            'w-2.5 h-2.5 rounded-full shrink-0',
+            `bg-${category.color}-500`
+          )} style={{ backgroundColor: `var(--${category.color}-500, #7C3AED)` }} />
+          <span className="text-sm font-semibold text-foreground">{category.name}</span>
+          <span className="text-xs text-muted-foreground">
+            ({category.excludeKeywords.length}개)
+          </span>
+        </div>
+        <span className={cn(
+          'text-xs font-medium',
+          saveStatus === 'saved' ? 'text-emerald-600' :
+          saveStatus === 'error' ? 'text-destructive' :
+          saveStatus === 'saving' ? 'text-muted-foreground' : 'hidden'
+        )}>
+          {saveStatus === 'saving' ? '저장 중...' :
+           saveStatus === 'saved'  ? '✓ 저장됨' :
+           saveStatus === 'error'  ? '저장 실패' : ''}
+        </span>
+      </div>
+
+      {/* 입력 */}
       <div className="flex gap-2">
         <Input
-          placeholder="제외 키워드 입력 (예: 주식, stock price)"
+          placeholder="제외 키워드 입력 후 Enter (예: 주식, stock price)"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && addKeyword()}
-          className="flex-1"
+          className="flex-1 h-8 text-sm"
         />
-        <Button onClick={addKeyword} size="sm" variant="destructive" className="gap-1.5">
-          <Plus className="h-4 w-4" /> 추가
+        <Button onClick={addKeyword} size="sm" variant="destructive" className="gap-1 h-8 px-3">
+          <Plus className="h-3.5 w-3.5" /> 추가
         </Button>
       </div>
 
-      <Separator />
-
-      {config.excludeKeywords.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-6">제외 키워드가 없습니다.</p>
+      {/* 키워드 목록 */}
+      {category.excludeKeywords.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-1">이 분야의 제외 키워드가 없습니다.</p>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          {config.excludeKeywords.map((kw) => (
+        <div className="flex flex-wrap gap-1.5">
+          {category.excludeKeywords.map((kw) => (
             <span
               key={kw}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-destructive/10 text-destructive rounded-full text-sm font-medium border border-destructive/20"
+              className="flex items-center gap-1 px-2.5 py-1 bg-destructive/10 text-destructive rounded-full text-xs font-medium border border-destructive/20"
             >
               {kw}
-              <button
-                onClick={() => onChange({ ...config, excludeKeywords: config.excludeKeywords.filter((k) => k !== kw) })}
-                className="hover:opacity-70"
-              >
-                <X className="h-3.5 w-3.5" />
+              <button onClick={() => removeKeyword(kw)} className="hover:opacity-70 ml-0.5">
+                <X className="h-3 w-3" />
               </button>
             </span>
           ))}

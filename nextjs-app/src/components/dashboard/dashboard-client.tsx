@@ -135,7 +135,14 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
       const settled = await Promise.allSettled(
         selectedCountries.map((country) =>
           fetch(
-            `/api/news/search?${new URLSearchParams({ query, country, dateRange: drApi })}`
+            `/api/news/search?${new URLSearchParams({
+              query,
+              country,
+              dateRange: drApi,
+              ...(selectedCategoryIds.length > 0 && {
+                categoryIds: selectedCategoryIds.join(','),
+              }),
+            })}`
           ).then(async (r) => {
             if (!r.ok) {
               const type = await classifyError(r)
