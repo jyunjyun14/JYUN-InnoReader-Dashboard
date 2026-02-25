@@ -3,7 +3,7 @@ import { ACCESS_COOKIE, hashAccessCode } from '@/lib/access'
 
 /** POST /api/access — 접근 코드 검증 + 쿠키 발급 */
 export async function POST(req: NextRequest) {
-  const requiredCode = process.env.ACCESS_CODE
+  const requiredCode = process.env.ACCESS_CODE?.trim()
 
   // ACCESS_CODE 미설정 시 자동 허용 (개발 환경)
   if (!requiredCode) {

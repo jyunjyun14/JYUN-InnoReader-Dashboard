@@ -10,7 +10,7 @@ export const ACCESS_COOKIE = 'site_access'
  * 미들웨어(Edge)와 API 라우트(Node.js) 양쪽에서 동일하게 동작
  */
 export async function hashAccessCode(code: string): Promise<string> {
-  const secret = process.env.NEXTAUTH_SECRET ?? 'fallback-secret'
+  const secret = (process.env.NEXTAUTH_SECRET ?? 'fallback-secret').trim()
   const data = new TextEncoder().encode(`${code}:${secret}`)
   const buf = await crypto.subtle.digest('SHA-256', data)
   return Array.from(new Uint8Array(buf))
