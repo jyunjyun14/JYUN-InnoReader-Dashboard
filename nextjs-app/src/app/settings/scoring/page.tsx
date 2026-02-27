@@ -32,6 +32,12 @@ export default async function ScoringPage() {
 
   const categories = rawCategories.map((cat) => ({
     ...cat,
+    priorityKeywords: (() => {
+      try {
+        const parsed = JSON.parse(cat.priorityKeywords)
+        return Array.isArray(parsed) ? (parsed as { term: string; weight: number }[]) : []
+      } catch { return [] as { term: string; weight: number }[] }
+    })(),
     excludeKeywords: (() => {
       try {
         const parsed = JSON.parse(cat.excludeKeywords)

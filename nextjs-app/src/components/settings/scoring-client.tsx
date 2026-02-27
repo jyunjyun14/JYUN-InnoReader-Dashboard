@@ -23,11 +23,17 @@ type WeightKey = 'weightKeyword' | 'weightPriority' | 'weightSource' | 'weightRe
 type Tab = 'weights' | 'priority' | 'exclude' | 'sources'
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
+interface CategoryPriorityKeyword {
+  term: string
+  weight: number
+}
+
 interface CategoryWithExclude {
   id: string
   name: string
   color: string
   keywords: { id: string; term: string }[]
+  priorityKeywords: CategoryPriorityKeyword[]
   excludeKeywords: string[]
 }
 
@@ -359,7 +365,7 @@ export function ScoringClient({ initialConfig, initialCategories }: Props) {
 
           <div className="pt-5">
             {tab === 'weights'  && <WeightsTab  config={config} onChange={setConfig} />}
-            {tab === 'priority' && <PriorityTab config={config} onChange={setConfig} />}
+            {tab === 'priority' && <PriorityTab categories={categories} onCategoriesChange={setCategories} />}
             {tab === 'exclude'  && <ExcludeTab  categories={categories} onCategoriesChange={setCategories} />}
             {tab === 'sources'  && <SourcesTab  config={config} onChange={setConfig} />}
           </div>
@@ -453,79 +459,165 @@ function WeightsTab({ config, onChange }: { config: ScoringConfig; onChange: (c:
   )
 }
 
-// ── 2. 우선 키워드 탭 ─────────────────────────────────────────
-function PriorityTab({ config, onChange }: { config: ScoringConfig; onChange: (c: ScoringConfig) => void }) {
-  const [term,   setTerm]   = useState('')
-  const [weight, setWeight] = useState(3)
-
-  const WEIGHT_LABELS: Record<number, string> = { 1: '낮음', 2: '보통-', 3: '보통', 4: '높음', 5: '최고' }
-
-  function addKeyword() {
-    const t = term.trim()
-    if (!t) return
-    if (config.priorityKeywords.some((pk) => pk.term.toLowerCase() === t.toLowerCase())) return
-    onChange({ ...config, priorityKeywords: [...config.priorityKeywords, { term: t, weight }] })
-    setTerm('')
-    setWeight(3)
+// ── 2. 우선 키워드 탭 (분야별) ────────────────────────────────
+function PriorityTab({
+  categories,
+  onCategoriesChange,
+}: {
+  categories: CategoryWithExclude[]
+  onCategoriesChange: (cats: CategoryWithExclude[]) => void
+}) {
+  if (categories.length === 0) {
+    return (
+      <div className="py-10 text-center text-sm text-muted-foreground">
+        분야가 없습니다.{' '}
+        <a href="/settings/keywords" className="text-primary hover:underline">
+          키워드 설정
+        </a>
+        에서 분야를 먼저 추가하세요.
+      </div>
+    )
   }
 
-  function removeKeyword(idx: number) {
-    onChange({ ...config, priorityKeywords: config.priorityKeywords.filter((_, i) => i !== idx) })
-  }
-
-  function updateWeight(idx: number, w: number) {
-    const updated = [...config.priorityKeywords]
-    updated[idx] = { ...updated[idx], weight: w }
-    onChange({ ...config, priorityKeywords: updated })
+  function handleUpdate(categoryId: string, keywords: CategoryPriorityKeyword[]) {
+    onCategoriesChange(
+      categories.map((c) => (c.id === categoryId ? { ...c, priorityKeywords: keywords } : c))
+    )
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        지정된 키워드가 기사에 포함될 때 <strong className="text-foreground">가중치 보너스</strong>를 부여합니다.
+        분야별로 <strong className="text-foreground">가중치 보너스</strong>를 줄 키워드를 설정합니다.
+        해당 키워드가 기사에 포함되면 스코어가 올라갑니다.
       </p>
+      {categories.map((cat) => (
+        <CategoryPrioritySection
+          key={cat.id}
+          category={cat}
+          onUpdate={(kws) => handleUpdate(cat.id, kws)}
+        />
+      ))}
+    </div>
+  )
+}
 
+const WEIGHT_LABELS: Record<number, string> = { 1: '낮음', 2: '보통-', 3: '보통', 4: '높음', 5: '최고' }
+
+function CategoryPrioritySection({
+  category,
+  onUpdate,
+}: {
+  category: CategoryWithExclude
+  onUpdate: (keywords: CategoryPriorityKeyword[]) => void
+}) {
+  const [input, setInput]   = useState('')
+  const [weight, setWeight] = useState(3)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  async function save(keywords: CategoryPriorityKeyword[]) {
+    setSaveStatus('saving')
+    try {
+      const res = await fetch(`/api/categories/${category.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priorityKeywords: keywords }),
+      })
+      if (!res.ok) throw new Error()
+      onUpdate(keywords)
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    } catch {
+      setSaveStatus('error')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    }
+  }
+
+  function addKeyword() {
+    const t = input.trim()
+    if (!t) return
+    if (category.priorityKeywords.some((pk) => pk.term.toLowerCase() === t.toLowerCase())) return
+    const next = [...category.priorityKeywords, { term: t, weight }]
+    setInput('')
+    setWeight(3)
+    save(next)
+  }
+
+  function removeKeyword(term: string) {
+    save(category.priorityKeywords.filter((k) => k.term !== term))
+  }
+
+  function updateWeight(term: string, w: number) {
+    save(category.priorityKeywords.map((k) => k.term === term ? { ...k, weight: w } : k))
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      {/* 분야 헤더 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span
+            className="w-2.5 h-2.5 rounded-full shrink-0"
+            style={{ backgroundColor: `var(--${category.color}-500, #7C3AED)` }}
+          />
+          <span className="text-sm font-semibold text-foreground">{category.name}</span>
+          <span className="text-xs text-muted-foreground">
+            ({category.priorityKeywords.length}개)
+          </span>
+        </div>
+        <span className={cn(
+          'text-xs font-medium',
+          saveStatus === 'saved'  ? 'text-emerald-600' :
+          saveStatus === 'error'  ? 'text-destructive' :
+          saveStatus === 'saving' ? 'text-muted-foreground' : 'hidden'
+        )}>
+          {saveStatus === 'saving' ? '저장 중...' :
+           saveStatus === 'saved'  ? '✓ 저장됨' :
+           saveStatus === 'error'  ? '저장 실패' : ''}
+        </span>
+      </div>
+
+      {/* 입력 */}
       <div className="flex gap-2">
         <Input
-          placeholder="키워드 입력 (예: AI drug discovery)"
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
+          placeholder="우선 키워드 입력 후 Enter (예: 의료 관세)"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && addKeyword()}
-          className="flex-1"
+          className="flex-1 h-8 text-sm"
         />
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-xs text-muted-foreground whitespace-nowrap">가중치</span>
-          <select
-            value={weight}
-            onChange={(e) => setWeight(Number(e.target.value))}
-            className="h-9 px-2 rounded border border-border text-sm bg-background"
-          >
-            {[1, 2, 3, 4, 5].map((w) => (
-              <option key={w} value={w}>{w}× ({WEIGHT_LABELS[w]})</option>
-            ))}
-          </select>
-        </div>
-        <Button onClick={addKeyword} size="sm" className="gap-1.5">
-          <Plus className="h-4 w-4" /> 추가
+        <select
+          value={weight}
+          onChange={(e) => setWeight(Number(e.target.value))}
+          className="h-8 px-2 rounded border border-border text-xs bg-background"
+        >
+          {[1, 2, 3, 4, 5].map((w) => (
+            <option key={w} value={w}>{w}× ({WEIGHT_LABELS[w]})</option>
+          ))}
+        </select>
+        <Button onClick={addKeyword} size="sm" className="gap-1 h-8 px-3">
+          <Plus className="h-3.5 w-3.5" /> 추가
         </Button>
       </div>
 
-      <Separator />
-
-      {config.priorityKeywords.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-6">우선 키워드가 없습니다. 위에서 추가하세요.</p>
+      {/* 키워드 목록 */}
+      {category.priorityKeywords.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-1">이 분야의 우선 키워드가 없습니다.</p>
       ) : (
-        <div className="space-y-2">
-          {config.priorityKeywords.map((pk, i) => (
-            <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border bg-card">
-              <span className="flex-1 text-sm font-medium text-foreground">{pk.term}</span>
-              <div className="flex items-center gap-1">
+        <div className="space-y-1.5">
+          {category.priorityKeywords.map((pk) => (
+            <div
+              key={pk.term}
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border bg-background"
+            >
+              <span className="flex-1 text-xs font-medium text-foreground">{pk.term}</span>
+              <div className="flex items-center gap-0.5">
                 {[1, 2, 3, 4, 5].map((w) => (
                   <button
                     key={w}
-                    onClick={() => updateWeight(i, w)}
+                    onClick={() => updateWeight(pk.term, w)}
                     className={cn(
-                      'w-7 h-7 rounded text-xs font-semibold transition-colors',
+                      'w-6 h-6 rounded text-[10px] font-semibold transition-colors',
                       pk.weight === w
                         ? 'bg-primary text-primary-foreground'
                         : 'bg-secondary text-muted-foreground hover:bg-secondary/70'
@@ -534,10 +626,13 @@ function PriorityTab({ config, onChange }: { config: ScoringConfig; onChange: (c
                     {w}
                   </button>
                 ))}
-                <span className="text-xs text-muted-foreground ml-1 w-12">{WEIGHT_LABELS[pk.weight]}</span>
+                <span className="text-[10px] text-muted-foreground ml-1 w-10">{WEIGHT_LABELS[pk.weight]}</span>
               </div>
-              <button onClick={() => removeKeyword(i)} className="p-1 text-muted-foreground hover:text-destructive transition-colors">
-                <X className="h-4 w-4" />
+              <button
+                onClick={() => removeKeyword(pk.term)}
+                className="p-0.5 text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
           ))}

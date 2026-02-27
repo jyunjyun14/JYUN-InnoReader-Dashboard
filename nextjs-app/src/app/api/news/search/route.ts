@@ -77,12 +77,20 @@ export async function GET(req: NextRequest) {
     categoryIds.length > 0
       ? prisma.category.findMany({
           where: { id: { in: categoryIds }, userId: session.user.id },
-          select: { excludeKeywords: true },
+          select: { priorityKeywords: true, excludeKeywords: true },
         })
       : Promise.resolve([]),
   ])
 
   const scoringConfig = parseScoringConfig(scoringRow)
+
+  // 분야별 우선 키워드 병합
+  const catPriorityKws = catRows.flatMap((c) => {
+    try {
+      const parsed = JSON.parse(c.priorityKeywords)
+      return Array.isArray(parsed) ? (parsed as { term: string; weight: number }[]) : []
+    } catch { return [] }
+  })
 
   // 분야별 제외 키워드 병합
   const catExcludeKws = catRows.flatMap((c) => {
@@ -91,9 +99,25 @@ export async function GET(req: NextRequest) {
       return Array.isArray(parsed) ? (parsed as string[]) : []
     } catch { return [] }
   })
-  const mergedConfig = catExcludeKws.length > 0
-    ? { ...scoringConfig, excludeKeywords: Array.from(new Set([...scoringConfig.excludeKeywords, ...catExcludeKws])) }
-    : scoringConfig
+
+  // 분야별 키워드가 있으면 전역 설정과 병합 (중복 term은 분야별 키워드 우선)
+  const mergedPriorityKws = catPriorityKws.length > 0
+    ? (() => {
+        const catTerms = new Set(catPriorityKws.map((k) => k.term.toLowerCase()))
+        const globalOnly = scoringConfig.priorityKeywords.filter(
+          (k) => !catTerms.has(k.term.toLowerCase())
+        )
+        return [...catPriorityKws, ...globalOnly]
+      })()
+    : scoringConfig.priorityKeywords
+
+  const mergedConfig = {
+    ...scoringConfig,
+    priorityKeywords: mergedPriorityKws,
+    excludeKeywords: catExcludeKws.length > 0
+      ? Array.from(new Set([...scoringConfig.excludeKeywords, ...catExcludeKws]))
+      : scoringConfig.excludeKeywords,
+  }
 
   // ── 캐시 히트 ────────────────────────────────────────────────
   if (cached) {
