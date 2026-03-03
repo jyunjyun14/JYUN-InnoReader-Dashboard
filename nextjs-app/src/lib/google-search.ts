@@ -9,7 +9,7 @@
 import type { NewsItem } from '@/types/news'
 import { batchTranslateToKorean } from './translate'
 
-const BASE_URL  = 'https://newsdata.io/api/1/latest'
+const BASE_URL  = 'https://newsdata.io/api/1/news'  // /latest는 from_date 미지원
 const PAGE_SIZE = 10  // 무료 플랜 최대 (유료: 50)
 const MAX_PAGES = 5   // 1 search = 최대 5 req × 10건 = 50건 (5 크레딧)
 
@@ -82,18 +82,6 @@ export class GoogleSearchError extends Error {
   }
 }
 
-// ── 날짜 범위 → from 날짜 변환 ───────────────────────────────
-
-function dateRangeToFrom(dateRange: string): string {
-  const days: Record<string, number> = {
-    d1: 1, d3: 3, d7: 7, w1: 7,
-    m1: 30, m3: 90, m6: 180, y1: 365,
-  }
-  const d = days[dateRange] ?? 30
-  const from = new Date(Date.now() - d * 24 * 60 * 60 * 1000)
-  return from.toISOString().split('T')[0]
-}
-
 // ── 초기 적합도 점수 (applyScoring 전 기본값) ─────────────────
 
 function calculateRelevanceScore(
@@ -158,20 +146,19 @@ async function fetchOnePage(opts: {
   query:      string
   language:   string
   country:    string
-  fromDate:   string
   apiKey:     string
   pageToken?: string
 }): Promise<{ articles: NewsDataArticle[]; nextPage: string | null; totalResults: number }> {
-  const { query, language, country, fromDate, apiKey, pageToken } = opts
+  const { query, language, country, apiKey, pageToken } = opts
 
   const url = new URL(BASE_URL)
   const p   = url.searchParams
-  p.set('apikey',    apiKey)
-  p.set('q',         query)
-  p.set('language',  language)
-  p.set('country',   country)
-  p.set('from_date', fromDate)
-  p.set('size',      String(PAGE_SIZE))
+  p.set('apikey',          apiKey)
+  p.set('q',               query)
+  p.set('language',        language)
+  p.set('country',         country)
+  p.set('removeduplicate', '1')     // 중복 기사 제거
+  p.set('size',            String(PAGE_SIZE))
   if (pageToken) p.set('page', pageToken)
 
   let response: Response
@@ -236,10 +223,10 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
     throw new GoogleSearchError('NEWSDATA_API_KEY 환경변수가 설정되지 않았습니다.', 500)
   }
 
-  const config   = COUNTRY_CONFIGS[country] ?? COUNTRY_CONFIGS.us
-  const fromDate = dateRangeToFrom(dateRange)
+  const config = COUNTRY_CONFIGS[country] ?? COUNTRY_CONFIGS.us
 
   // ── 다중 페이지 수집 ────────────────────────────────────────
+  // 무료 플랜은 date 필터 미지원 → 최신 기사 반환 후 클라이언트에서 recency 스코어링
   const allArticles: NewsDataArticle[] = []
   let pageToken:    string | undefined  = undefined
   let totalResults: number              = 0
@@ -249,7 +236,7 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
 
     try {
       pageData = await fetchOnePage({
-        query, language: config.language, country, fromDate, apiKey, pageToken,
+        query, language: config.language, country, apiKey, pageToken,
       })
     } catch (err) {
       if (page === 0) throw err  // 첫 페이지 실패 → 에러 전파
@@ -268,10 +255,19 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
 
   // ── NewsItem 변환 ────────────────────────────────────────────
   const partial = allArticles.map((article) => {
+    // pubDate 포맷: "2026-03-02 19:15:43" → ISO 8601
     const publishedAt = article.pubDate
-      ? new Date(article.pubDate).toISOString()
+      ? new Date(article.pubDate.replace(' ', 'T') + 'Z').toISOString()
       : null
-    const snippet = (article.description ?? article.content ?? '').replace(/\n/g, ' ').trim()
+
+    // 무료 플랜은 content가 "ONLY AVAILABLE IN PAID PLANS" 문자열로 옴 → 제외
+    const isPaidOnly = (s: string | null) =>
+      !s || s.startsWith('ONLY AVAILABLE')
+    const snippet = (
+      !isPaidOnly(article.description) ? article.description :
+      !isPaidOnly(article.content)     ? article.content : ''
+    )!.replace(/\n/g, ' ').trim()
+
     const source  =
       article.source_name ??
       (article.source_url
