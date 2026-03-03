@@ -116,10 +116,10 @@ function calculateRelevanceScore(
     else if (snippetLower.includes(term)) snippetMatches++
   }
 
-  // 제목에 키워드가 하나도 없으면 0점 (제목 기준 필터링)
-  if (titleMatches === 0) return 0
-
   let score = titleMatches * 4 + snippetMatches * 1
+
+  // 제목에 키워드가 없으면 점수를 낮게 유지 (스코어링 시스템에서 최종 판단)
+  if (titleMatches === 0) score = Math.max(0, score * 0.3)
 
   if (publishedAt) {
     const daysDiff =
@@ -185,8 +185,8 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
   p.set('sortBy', 'publishedAt')
   p.set('pageSize', String(pageSize))
   p.set('page', String(page))
-  // 제목·설명에서만 검색 → 본문에 키워드만 있는 무관 기사 차단
-  p.set('searchIn', 'title,description')
+  // 제목+설명+본문 전체 검색 → 더 많은 기사 매칭 (스코어링으로 정렬)
+  p.set('searchIn', 'title,description,content')
 
   let response: Response
   try {
@@ -232,7 +232,7 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
   const rawArticles = (data.articles ?? []).filter(
     (a) => a.title && a.title !== '[Removed]' && a.url
   )
-  const totalResults = Math.min(data.totalResults ?? 0, 100)
+  const totalResults = data.totalResults ?? 0
   const hasNextPage = page * pageSize < totalResults
 
   const partial = rawArticles.map((article) => {

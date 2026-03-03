@@ -119,9 +119,11 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
       return
     }
 
-    // 공백 포함 키워드는 따옴표로 묶어 정확한 구문 검색 → 무관 기사 차단
+    // 키워드를 OR로 연결 (NewsAPI 쿼리)
+    // 3단어 이상 긴 구문은 따옴표로 묶어 정확도 유지,
+    // 2단어 이하는 따옴표 없이 → 더 많은 기사 매칭
     const query = keywords
-      .map((k) => (k.includes(' ') ? `"${k}"` : k))
+      .map((k) => (k.split(/\s+/).length >= 3 ? `"${k}"` : k))
       .join(' OR ')
       .slice(0, 500) // NewsAPI 최대 쿼리 길이
     const drApi = DATE_RANGE_API[dateRange] ?? 'm1'
