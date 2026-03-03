@@ -1,15 +1,17 @@
 /**
- * NewsAPI 클라이언트 (google-search.ts 대체)
+ * NewsData.io API 클라이언트
  *
- * - 무료 한도: 100 requests/day (카드 등록 불필요)
- * - 엔드포인트: https://newsapi.org/v2/everything
- * - 국가 필터: language 파라미터로 대체
+ * - 무료: 200 크레딧/일, 10건/요청 → 최대 2,000건/일
+ * - 페이지당 10건, 최대 MAX_PAGES 페이지 연속 수집
+ * - 캐시(6h) 덕분에 동일 쿼리 반복 시 크레딧 소모 없음
  */
 
 import type { NewsItem } from '@/types/news'
 import { batchTranslateToKorean } from './translate'
 
-const BASE_URL = 'https://newsapi.org/v2/everything'
+const BASE_URL  = 'https://newsdata.io/api/1/latest'
+const PAGE_SIZE = 10  // 무료 플랜 최대 (유료: 50)
+const MAX_PAGES = 5   // 1 search = 최대 5 req × 10건 = 50건 (5 크레딧)
 
 // ── 국가별 설정 (기존 호환성 유지) ───────────────────────────
 
@@ -18,7 +20,7 @@ interface CountryConfig {
   gl: string
   cr: string
   lr: string
-  language: string  // NewsAPI language 코드
+  language: string
 }
 
 export const COUNTRY_CONFIGS: Record<string, CountryConfig> = {
@@ -38,31 +40,33 @@ export const COUNTRY_CONFIGS: Record<string, CountryConfig> = {
   fr: { nameKo: '프랑스',     gl: 'fr', cr: 'countryFR', lr: 'lang_fr', language: 'fr' },
 }
 
-export const SUPPORTED_COUNTRIES = Object.keys(COUNTRY_CONFIGS)
+export const SUPPORTED_COUNTRIES    = Object.keys(COUNTRY_CONFIGS)
+export const SUPPORTED_DATE_RANGES  = ['d1', 'd3', 'd7', 'w1', 'm1', 'm3', 'm6', 'y1']
 
-export const SUPPORTED_DATE_RANGES = [
-  'd1', 'd3', 'd7', 'w1', 'm1', 'm3', 'm6', 'y1',
-]
+// ── NewsData.io 응답 타입 ─────────────────────────────────────
 
-// ── NewsAPI 응답 타입 ─────────────────────────────────────────
-
-interface NewsApiArticle {
-  source: { id: string | null; name: string }
-  author: string | null
-  title: string
+interface NewsDataArticle {
+  article_id: string
+  title:       string | null
+  link:        string | null
+  source_id:   string
+  source_name: string | null
+  source_url:  string | null
   description: string | null
-  url: string
-  urlToImage: string | null
-  publishedAt: string
-  content: string | null
+  content:     string | null
+  pubDate:     string | null
+  image_url:   string | null
+  language:    string
+  country:     string[]
 }
 
-interface NewsApiResponse {
-  status: string
+interface NewsDataResponse {
+  status:        string
   totalResults?: number
-  articles?: NewsApiArticle[]
-  code?: string
-  message?: string
+  results?:      NewsDataArticle[]
+  nextPage?:     string | null
+  code?:         string
+  message?:      string
 }
 
 // ── 커스텀 에러 (기존 호환성 유지) ───────────────────────────
@@ -87,10 +91,10 @@ function dateRangeToFrom(dateRange: string): string {
   }
   const d = days[dateRange] ?? 30
   const from = new Date(Date.now() - d * 24 * 60 * 60 * 1000)
-  return from.toISOString().split('T')[0] // YYYY-MM-DD
+  return from.toISOString().split('T')[0]
 }
 
-// ── 적합도 점수 계산 ──────────────────────────────────────────
+// ── 초기 적합도 점수 (applyScoring 전 기본값) ─────────────────
 
 function calculateRelevanceScore(
   title: string,
@@ -98,7 +102,6 @@ function calculateRelevanceScore(
   query: string,
   publishedAt: string | null
 ): number {
-  // "A OR B OR C" 또는 '"A B" OR "C D"' 형태 파싱
   const terms = query
     .split(/\s+OR\s+/i)
     .map((t) => t.trim().replace(/^"|"$/g, '').toLowerCase())
@@ -106,10 +109,10 @@ function calculateRelevanceScore(
 
   if (terms.length === 0) return 0
 
-  const titleLower = title.toLowerCase()
+  const titleLower   = title.toLowerCase()
   const snippetLower = snippet.toLowerCase()
 
-  let titleMatches = 0
+  let titleMatches   = 0
   let snippetMatches = 0
   for (const term of terms) {
     if (titleLower.includes(term)) titleMatches++
@@ -117,86 +120,63 @@ function calculateRelevanceScore(
   }
 
   let score = titleMatches * 4 + snippetMatches * 1
-
-  // 제목에 키워드가 없으면 점수를 낮게 유지 (스코어링 시스템에서 최종 판단)
   if (titleMatches === 0) score = Math.max(0, score * 0.3)
 
   if (publishedAt) {
-    const daysDiff =
-      (Date.now() - new Date(publishedAt).getTime()) / (1000 * 60 * 60 * 24)
-    if (daysDiff <= 1) score += 4
-    else if (daysDiff <= 3) score += 3
-    else if (daysDiff <= 7) score += 2
+    const daysDiff = (Date.now() - new Date(publishedAt).getTime()) / (1000 * 60 * 60 * 24)
+    if (daysDiff <= 1)  score += 4
+    else if (daysDiff <= 3)  score += 3
+    else if (daysDiff <= 7)  score += 2
     else if (daysDiff <= 14) score += 1
   }
 
   const maxPossible = terms.length * 4 + 4
-  const normalized = maxPossible > 0 ? (score / maxPossible) * 10 : 0
-  return Math.round(Math.min(10, normalized) * 10) / 10
+  return Math.round(Math.min(10, maxPossible > 0 ? (score / maxPossible) * 10 : 0) * 10) / 10
 }
 
 // ── 검색 파라미터 & 결과 타입 ────────────────────────────────
 
 export interface SearchParams {
-  query: string
+  query:      string
   dateRange?: string
-  country?: string
-  language?: string
-  start?: number
-  num?: number
+  country?:   string
+  language?:  string
+  start?:     number
+  num?:       number
 }
 
 export interface SearchResult {
-  items: NewsItem[]
+  items:        NewsItem[]
   totalResults: number
-  startIndex: number
-  hasNextPage: boolean
+  startIndex:   number
+  hasNextPage:  boolean
 }
 
-// ── 메인 검색 함수 ────────────────────────────────────────────
+// ── 단일 페이지 fetch ─────────────────────────────────────────
 
-export async function searchNews(params: SearchParams): Promise<SearchResult> {
-  const {
-    query,
-    dateRange = 'm1',
-    country = 'us',
-    start = 1,
-    num = 100,  // 한 번에 최대 100건 수집
-  } = params
-
-  const apiKey = process.env.NEWS_API_KEY
-
-  if (!apiKey) {
-    throw new GoogleSearchError(
-      'NEWS_API_KEY 환경변수가 설정되지 않았습니다.',
-      500
-    )
-  }
-
-  const config = COUNTRY_CONFIGS[country] ?? COUNTRY_CONFIGS.us
-  const pageSize = Math.min(Math.max(1, num), 100)
-  const page = Math.ceil(start / pageSize)
+async function fetchOnePage(opts: {
+  query:      string
+  language:   string
+  country:    string
+  fromDate:   string
+  apiKey:     string
+  pageToken?: string
+}): Promise<{ articles: NewsDataArticle[]; nextPage: string | null; totalResults: number }> {
+  const { query, language, country, fromDate, apiKey, pageToken } = opts
 
   const url = new URL(BASE_URL)
-  const p = url.searchParams
-  p.set('q', query)
-  p.set('language', config.language)
-  p.set('from', dateRangeToFrom(dateRange))
-  p.set('sortBy', 'publishedAt')
-  p.set('pageSize', String(pageSize))
-  p.set('page', String(page))
-  // 제목+설명+본문 전체 검색 → 더 많은 기사 매칭 (스코어링으로 정렬)
-  p.set('searchIn', 'title,description,content')
+  const p   = url.searchParams
+  p.set('apikey',    apiKey)
+  p.set('q',         query)
+  p.set('language',  language)
+  p.set('country',   country)
+  p.set('from_date', fromDate)
+  p.set('size',      String(PAGE_SIZE))
+  if (pageToken) p.set('page', pageToken)
 
   let response: Response
   try {
-    response = await fetch(url.toString(), {
-      headers: {
-        'X-Api-Key': apiKey,
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    })
+    response = await fetch(url.toString(), { cache: 'no-store' })
   } catch (err) {
     throw new GoogleSearchError(
       `네트워크 오류: ${err instanceof Error ? err.message : '알 수 없는 오류'}`,
@@ -204,63 +184,116 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
     )
   }
 
-  const data: NewsApiResponse = await response.json()
-
-  // ── 에러 처리 ──────────────────────────────────────────────
-  if (data.status !== 'ok') {
-    const code = data.code ?? ''
-    const message = data.message ?? 'NewsAPI 오류'
-
-    if (code === 'rateLimited' || response.status === 429) {
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
       throw new GoogleSearchError(
-        'NewsAPI 일일 할당량(100건)을 초과했습니다. 내일 다시 시도해주세요.',
-        429,
-        code
+        'NewsData.io 인증 오류입니다. NEWSDATA_API_KEY를 확인해주세요.',
+        403, 'AUTH_ERROR'
       )
     }
-    if (code === 'apiKeyInvalid' || code === 'apiKeyDisabled' || response.status === 401) {
+    if (response.status === 429) {
       throw new GoogleSearchError(
-        'NewsAPI 인증 오류입니다. NEWS_API_KEY를 확인해주세요.',
-        403,
-        code
+        'NewsData.io 일일 크레딧을 초과했습니다. 내일 다시 시도해주세요.',
+        429, 'QUOTA_EXCEEDED'
       )
     }
-    throw new GoogleSearchError(message, response.status || 502, code)
+    throw new GoogleSearchError(`NewsData.io 오류 (${response.status})`, response.status)
   }
 
-  // ── 결과 파싱 ──────────────────────────────────────────────
-  const rawArticles = (data.articles ?? []).filter(
-    (a) => a.title && a.title !== '[Removed]' && a.url
-  )
-  const totalResults = data.totalResults ?? 0
-  const hasNextPage = page * pageSize < totalResults
+  const data: NewsDataResponse = await response.json()
 
-  const partial = rawArticles.map((article) => {
-    const publishedAt = article.publishedAt
-      ? new Date(article.publishedAt).toISOString()
+  if (data.status !== 'success') {
+    const code = data.code ?? ''
+    if (code === 'QuotaExceeded' || code === 'QuotaError') {
+      throw new GoogleSearchError(
+        'NewsData.io 일일 크레딧을 초과했습니다. 내일 다시 시도해주세요.',
+        429, code
+      )
+    }
+    if (code === 'InvalidApikey' || code === 'ApiKeyNotFound') {
+      throw new GoogleSearchError(
+        'NewsData.io API 키가 유효하지 않습니다. NEWSDATA_API_KEY를 확인해주세요.',
+        403, code
+      )
+    }
+    throw new GoogleSearchError(data.message ?? 'NewsData.io 오류', 502, code)
+  }
+
+  return {
+    articles:     data.results ?? [],
+    nextPage:     data.nextPage ?? null,
+    totalResults: data.totalResults ?? 0,
+  }
+}
+
+// ── 메인 검색 함수 ────────────────────────────────────────────
+
+export async function searchNews(params: SearchParams): Promise<SearchResult> {
+  const { query, dateRange = 'm1', country = 'us' } = params
+
+  const apiKey = process.env.NEWSDATA_API_KEY
+  if (!apiKey) {
+    throw new GoogleSearchError('NEWSDATA_API_KEY 환경변수가 설정되지 않았습니다.', 500)
+  }
+
+  const config   = COUNTRY_CONFIGS[country] ?? COUNTRY_CONFIGS.us
+  const fromDate = dateRangeToFrom(dateRange)
+
+  // ── 다중 페이지 수집 ────────────────────────────────────────
+  const allArticles: NewsDataArticle[] = []
+  let pageToken:    string | undefined  = undefined
+  let totalResults: number              = 0
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    let pageData: { articles: NewsDataArticle[]; nextPage: string | null; totalResults: number }
+
+    try {
+      pageData = await fetchOnePage({
+        query, language: config.language, country, fromDate, apiKey, pageToken,
+      })
+    } catch (err) {
+      if (page === 0) throw err  // 첫 페이지 실패 → 에러 전파
+      break                       // 중간 페이지 실패 → 수집 중단 후 반환
+    }
+
+    totalResults = pageData.totalResults
+    const valid  = pageData.articles.filter(
+      (a) => a.title && a.title !== '[Removed]' && a.link
+    )
+    allArticles.push(...valid)
+
+    if (!pageData.nextPage || valid.length === 0) break
+    pageToken = pageData.nextPage
+  }
+
+  // ── NewsItem 변환 ────────────────────────────────────────────
+  const partial = allArticles.map((article) => {
+    const publishedAt = article.pubDate
+      ? new Date(article.pubDate).toISOString()
       : null
     const snippet = (article.description ?? article.content ?? '').replace(/\n/g, ' ').trim()
-    const source = article.source.name || new URL(article.url).hostname.replace(/^www\./, '')
+    const source  =
+      article.source_name ??
+      (article.source_url
+        ? new URL(article.source_url).hostname.replace(/^www\./, '')
+        : article.source_id)
 
     return {
-      title: article.title ?? '',
+      title:         article.title ?? '',
       snippet,
-      link: article.url ?? '',
+      link:          article.link ?? '',
       source,
       publishedAt,
       country,
-      thumbnailUrl: article.urlToImage ?? null,
+      thumbnailUrl:  article.image_url ?? null,
       relevanceScore: calculateRelevanceScore(
-        article.title ?? '',
-        snippet,
-        query,
-        publishedAt
+        article.title ?? '', snippet, query, publishedAt
       ),
     }
   })
 
-  // ── 한글 번역 ──────────────────────────────────────────────
-  const titles = partial.map((i) => i.title)
+  // ── 한글 번역 ────────────────────────────────────────────────
+  const titles          = partial.map((i) => i.title)
   const translatedTitles = await batchTranslateToKorean(titles)
 
   const items: NewsItem[] = partial.map((item, idx) => ({
@@ -268,5 +301,10 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
     titleKo: translatedTitles[idx] ?? '',
   }))
 
-  return { items, totalResults, startIndex: start, hasNextPage }
+  return {
+    items,
+    totalResults,
+    startIndex:  1,
+    hasNextPage: allArticles.length < totalResults,
+  }
 }

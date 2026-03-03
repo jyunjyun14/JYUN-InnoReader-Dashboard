@@ -133,9 +133,9 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  // ── Google Custom Search API 호출 ────────────────────────────
+  // ── NewsData.io API 호출 ─────────────────────────────────────
   try {
-    const result = await searchNews({ query, dateRange, country, language, start, num: 100 })
+    const result = await searchNews({ query, dateRange, country, language, start })
 
     // 캐시 저장은 백그라운드 (raw 결과 = 사용자별 점수 제외)
     setCachedSearch(cacheParams, result).catch((err) =>
@@ -161,7 +161,7 @@ export async function GET(req: NextRequest) {
       if (error.statusCode === 400 || error.statusCode === 403) {
         return NextResponse.json(
           {
-            error: 'Google Search API 인증 오류입니다. GOOGLE_API_KEY를 확인해주세요.',
+            error: 'NewsData.io 인증 오류입니다. NEWSDATA_API_KEY를 확인해주세요.',
             code: 'AUTH_ERROR',
             detail: error.reason,
           },
@@ -171,7 +171,7 @@ export async function GET(req: NextRequest) {
       if (error.statusCode >= 500) {
         return NextResponse.json(
           {
-            error: 'Google Search API가 일시적으로 사용 불가합니다. 잠시 후 재시도해주세요.',
+            error: 'NewsData.io가 일시적으로 사용 불가합니다. 잠시 후 재시도해주세요.',
             code: 'UPSTREAM_ERROR',
           },
           { status: 502 }
