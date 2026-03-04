@@ -11,7 +11,8 @@ import { batchTranslateToKorean } from './translate'
 
 const BASE_URL  = 'https://newsdata.io/api/1/news'  // /latest는 from_date 미지원
 const PAGE_SIZE = 10  // 무료 플랜 최대 (유료: 50)
-const MAX_PAGES = 5   // 1 search = 최대 5 req × 10건 = 50건 (5 크레딧)
+const MAX_PAGES = 3   // Vercel free 10s timeout 방지: 최대 3 req × 10건 = 30건 (3 크레딧)
+// ⚠️ 무료 플랜 q 파라미터 최대 100자 (UnsupportedQueryLength) → dashboard-client.tsx에서 100자 제한
 
 // ── 국가별 설정 (기존 호환성 유지) ───────────────────────────
 
@@ -184,6 +185,8 @@ async function fetchOnePage(opts: {
         429, 'QUOTA_EXCEEDED'
       )
     }
+    const errBody = await response.json().catch(() => ({}))
+    console.error(`[NEWSDATA_${response.status}]`, JSON.stringify(errBody))
     throw new GoogleSearchError(`NewsData.io 오류 (${response.status})`, response.status)
   }
 

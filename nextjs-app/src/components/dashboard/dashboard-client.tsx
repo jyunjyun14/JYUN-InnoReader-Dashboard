@@ -119,13 +119,17 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
       return
     }
 
-    // 키워드를 OR로 연결 (NewsAPI 쿼리)
+    // 키워드를 OR로 연결 (NewsData.io 쿼리)
     // 3단어 이상 긴 구문은 따옴표로 묶어 정확도 유지,
     // 2단어 이하는 따옴표 없이 → 더 많은 기사 매칭
-    const query = keywords
-      .map((k) => (k.split(/\s+/).length >= 3 ? `"${k}"` : k))
-      .join(' OR ')
-      .slice(0, 500) // NewsAPI 최대 쿼리 길이
+    // ⚠️ .slice() 금지 — 따옴표 중간 절단 시 NewsData.io 422 MalformedQuery 오류
+    const queryParts = keywords.map((k) => (k.split(/\s+/).length >= 2 ? `"${k}"` : k))
+    let query = ''
+    for (const part of queryParts) {
+      const next = query ? `${query} OR ${part}` : part
+      if (next.length > 100) break  // NewsData.io 무료 플랜 100자 제한
+      query = next
+    }
     const drApi = DATE_RANGE_API[dateRange] ?? 'm1'
 
     setIsLoading(true)
