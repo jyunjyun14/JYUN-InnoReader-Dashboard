@@ -63,10 +63,10 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   priorityKeywords: [],
   excludeKeywords: [],
   sourceTiers: DEFAULT_SOURCE_TIERS,
-  weightKeyword: 40,
-  weightPriority: 20,
-  weightSource: 20,
-  weightRecency: 20,
+  weightKeyword: 70,
+  weightPriority: 10,
+  weightSource: 10,
+  weightRecency: 5,
 }
 
 // ── 내부 헬퍼 ─────────────────────────────────────────────────
@@ -230,8 +230,8 @@ export function scoreNewsItem(input: ScoreInput, config: ScoringConfig): number 
     (t) => t.trim() && strIncludes(title, t)
   )
   if (!hasKeywordInTitle) {
-    // 제목 미매칭: 최신성+출처 합산의 30%만 인정, 최대 20점으로 제한
-    return Math.min(20, rawTotal * 0.3)
+    // 제목 미매칭: 관련 없는 기사로 판단해 완전 제외
+    return 0
   }
 
   return rawTotal

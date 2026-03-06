@@ -155,7 +155,7 @@ async function fetchOnePage(opts: {
   const url = new URL(BASE_URL)
   const p   = url.searchParams
   p.set('apikey',          apiKey)
-  p.set('q',               query)
+  p.set('qInTitle',        query)   // 제목 기준 검색으로 정확도 향상
   p.set('language',        language)
   p.set('country',         country)
   p.set('removeduplicate', '1')     // 중복 기사 제거
