@@ -112,24 +112,29 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
     const cats = initialCategories.filter((c) => selectedCategoryIds.includes(c.id))
     if (cats.length === 0 || selectedCountries.length === 0) return
 
-    const keywords = Array.from(new Set(cats.flatMap((c) => c.keywords.map((k) => k.term))))
-    if (keywords.length === 0) {
+    // 분야별 쿼리 빌드 (키워드 없는 분야 제외)
+    // ⚠️ .slice() 금지 — 따옴표 중간 절단 시 NewsData.io 422 MalformedQuery 오류
+    const catQueries = cats
+      .map((cat) => {
+        const parts = cat.keywords.map((k) =>
+          k.term.split(/\s+/).length >= 2 ? `"${k.term}"` : k.term
+        )
+        let q = ''
+        for (const part of parts) {
+          const next = q ? `${q} OR ${part}` : part
+          if (next.length > 100) break  // NewsData.io 무료 플랜 100자 제한
+          q = next
+        }
+        return q ? { catId: cat.id, query: q } : null
+      })
+      .filter((x): x is { catId: string; query: string } => x !== null)
+
+    if (catQueries.length === 0) {
       setHasSearched(true)
       setResults([])
       return
     }
 
-    // 키워드를 OR로 연결 (NewsData.io 쿼리)
-    // 3단어 이상 긴 구문은 따옴표로 묶어 정확도 유지,
-    // 2단어 이하는 따옴표 없이 → 더 많은 기사 매칭
-    // ⚠️ .slice() 금지 — 따옴표 중간 절단 시 NewsData.io 422 MalformedQuery 오류
-    const queryParts = keywords.map((k) => (k.split(/\s+/).length >= 2 ? `"${k}"` : k))
-    let query = ''
-    for (const part of queryParts) {
-      const next = query ? `${query} OR ${part}` : part
-      if (next.length > 100) break  // NewsData.io 무료 플랜 100자 제한
-      query = next
-    }
     const drApi = DATE_RANGE_API[dateRange] ?? 'm1'
 
     setIsLoading(true)
@@ -137,25 +142,25 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
     setHasSearched(true)
 
     try {
-      // 선택 국가별 병렬 fetch
+      // 분야 × 국가 조합별 병렬 fetch
       const settled = await Promise.allSettled(
-        selectedCountries.map((country) =>
-          fetch(
-            `/api/news/search?${new URLSearchParams({
-              query,
-              country,
-              dateRange: drApi,
-              ...(selectedCategoryIds.length > 0 && {
-                categoryIds: selectedCategoryIds.join(','),
-              }),
-            })}`
-          ).then(async (r) => {
-            if (!r.ok) {
-              const type = await classifyError(r)
-              throw Object.assign(new Error(type), { errorType: type })
-            }
-            return r.json()
-          })
+        catQueries.flatMap(({ catId, query }) =>
+          selectedCountries.map((country) =>
+            fetch(
+              `/api/news/search?${new URLSearchParams({
+                query,
+                country,
+                dateRange: drApi,
+                categoryIds: catId,
+              })}`
+            ).then(async (r) => {
+              if (!r.ok) {
+                const type = await classifyError(r)
+                throw Object.assign(new Error(type), { errorType: type })
+              }
+              return r.json()
+            })
+          )
         )
       )
 
