@@ -54,9 +54,9 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
   // ── URL params에서 초기값 읽기 ─────────────────────────────
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(() => {
     const v = searchParams.get('categories')
-    if (!v) return allIds
+    if (!v) return []
     const ids = v.split(',').filter((id) => allIds.includes(id))
-    return ids.length > 0 ? ids : allIds
+    return ids
   })
 
   const [selectedCountries, setSelectedCountries] = useState<string[]>(() => {
@@ -220,7 +220,7 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
     const sp = new URLSearchParams()
 
     // 기본값과 다를 때만 저장 (URL 간결하게 유지)
-    if (selectedCategoryIds.length > 0 && selectedCategoryIds.length < allIds.length)
+    if (selectedCategoryIds.length > 0)
       sp.set('categories', selectedCategoryIds.join(','))
     if (selectedCountries.join(',') !== 'us')
       sp.set('countries', selectedCountries.join(','))

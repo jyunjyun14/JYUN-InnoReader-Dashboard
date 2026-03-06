@@ -320,7 +320,8 @@ export function ScoringClient({ initialConfig, initialCategories }: Props) {
   ]
 
   return (
-    <div className="flex flex-col gap-6 max-w-5xl">
+    <div className="flex-1 overflow-y-auto">
+    <div className="flex flex-col gap-6 max-w-5xl pb-10">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <div>
@@ -378,6 +379,7 @@ export function ScoringClient({ initialConfig, initialCategories }: Props) {
           </div>
         </div>
       </div>
+    </div>
     </div>
   )
 }
