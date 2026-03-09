@@ -6,6 +6,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DashboardClient } from '@/components/dashboard/dashboard-client'
 import { NewsSkeletonList } from '@/components/dashboard/news-skeleton'
+import { getAdminUserId } from '@/lib/admin'
 
 export const metadata: Metadata = {
   title: '뉴스 대시보드',
@@ -18,11 +19,14 @@ export default async function DashboardPage() {
     redirect('/login')
   }
 
-  const categories = await prisma.category.findMany({
-    where: { userId: session.user.id },
-    include: { keywords: { orderBy: { createdAt: 'asc' } } },
-    orderBy: { createdAt: 'asc' },
-  })
+  const adminId = await getAdminUserId()
+  const categories = adminId
+    ? await prisma.category.findMany({
+        where: { userId: adminId },
+        include: { keywords: { orderBy: { createdAt: 'asc' } } },
+        orderBy: { createdAt: 'asc' },
+      })
+    : []
 
   return (
     // useSearchParams()는 Suspense 경계 필요

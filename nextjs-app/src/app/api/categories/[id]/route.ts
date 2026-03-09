@@ -3,19 +3,22 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
-// PATCH /api/categories/:id — 분야 수정 (name, color)
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+// ADMIN 여부 확인 헬퍼
+async function requireAdmin() {
   const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: '인증이 필요합니다.' }, { status: 401 })
-  }
+  if (!session?.user?.id) return { error: '인증이 필요합니다.', status: 401 }
+  if (session.user.role !== 'ADMIN') return { error: '관리자만 수정할 수 있습니다.', status: 403 }
+  return { session }
+}
+
+// PATCH /api/categories/:id — 분야 수정 (ADMIN 전용)
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+  const auth = await requireAdmin()
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const { name, color, priorityKeywords, excludeKeywords } = await req.json()
 
-  // 소유권 확인
-  const existing = await prisma.category.findFirst({
-    where: { id: params.id, userId: session.user.id },
-  })
+  const existing = await prisma.category.findFirst({ where: { id: params.id } })
   if (!existing) {
     return NextResponse.json({ error: '분야를 찾을 수 없습니다.' }, { status: 404 })
   }
@@ -46,16 +49,12 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   return NextResponse.json({ category: updated })
 }
 
-// DELETE /api/categories/:id — 분야 삭제 (키워드 cascade 삭제)
+// DELETE /api/categories/:id — 분야 삭제 (ADMIN 전용)
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: '인증이 필요합니다.' }, { status: 401 })
-  }
+  const auth = await requireAdmin()
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
-  const existing = await prisma.category.findFirst({
-    where: { id: params.id, userId: session.user.id },
-  })
+  const existing = await prisma.category.findFirst({ where: { id: params.id } })
   if (!existing) {
     return NextResponse.json({ error: '분야를 찾을 수 없습니다.' }, { status: 404 })
   }

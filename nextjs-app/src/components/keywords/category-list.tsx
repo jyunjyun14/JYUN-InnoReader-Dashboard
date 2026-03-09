@@ -15,6 +15,7 @@ interface CategoryListProps {
   onCreate: (name: string, color: string) => Promise<void>
   onUpdate: (id: string, name: string, color: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  isAdmin?: boolean
 }
 
 export function CategoryList({
@@ -24,6 +25,7 @@ export function CategoryList({
   onCreate,
   onUpdate,
   onDelete,
+  isAdmin = false,
 }: CategoryListProps) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<CategoryWithKeywords | undefined>()
@@ -69,10 +71,12 @@ export function CategoryList({
           <h3 className="font-semibold text-sm text-foreground">검색 분야</h3>
           <p className="text-xs text-muted-foreground mt-0.5">{categories.length}개 분야</p>
         </div>
-        <Button size="sm" onClick={openCreate} className="h-8 gap-1.5 text-xs">
-          <Plus className="h-3.5 w-3.5" />
-          분야 추가
-        </Button>
+        {isAdmin && (
+          <Button size="sm" onClick={openCreate} className="h-8 gap-1.5 text-xs">
+            <Plus className="h-3.5 w-3.5" />
+            분야 추가
+          </Button>
+        )}
       </div>
 
       {/* 분야 목록 */}
@@ -120,51 +124,52 @@ export function CategoryList({
                   </p>
                 </div>
 
-                {/* 액션 버튼 — 호버 시 표시 */}
-                {isPendingDelete ? (
-                  // 삭제 확인
-                  <div
-                    className="flex items-center gap-1"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span className="text-xs text-destructive font-medium flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3" />
-                      삭제?
-                    </span>
-                    <button
-                      onClick={(e) => handleDelete(cat.id, e)}
-                      disabled={deletingId === cat.id}
-                      className="text-xs px-1.5 py-0.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 transition-colors"
+                {/* 액션 버튼 — ADMIN 전용 */}
+                {isAdmin && (
+                  isPendingDelete ? (
+                    <div
+                      className="flex items-center gap-1"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      확인
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setPendingDeleteId(null)
-                      }}
-                      className="text-xs px-1.5 py-0.5 border border-border rounded hover:bg-accent transition-colors"
-                    >
-                      취소
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => openEdit(cat, e)}
-                      className="p-1.5 rounded hover:bg-background hover:text-primary transition-colors"
-                      title="수정"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={(e) => handleDelete(cat.id, e)}
-                      className="p-1.5 rounded hover:bg-background hover:text-destructive transition-colors"
-                      title="삭제"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+                      <span className="text-xs text-destructive font-medium flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        삭제?
+                      </span>
+                      <button
+                        onClick={(e) => handleDelete(cat.id, e)}
+                        disabled={deletingId === cat.id}
+                        className="text-xs px-1.5 py-0.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 transition-colors"
+                      >
+                        확인
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setPendingDeleteId(null)
+                        }}
+                        className="text-xs px-1.5 py-0.5 border border-border rounded hover:bg-accent transition-colors"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => openEdit(cat, e)}
+                        className="p-1.5 rounded hover:bg-background hover:text-primary transition-colors"
+                        title="수정"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(cat.id, e)}
+                        className="p-1.5 rounded hover:bg-background hover:text-destructive transition-colors"
+                        title="삭제"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )
                 )}
               </div>
             )

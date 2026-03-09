@@ -7,9 +7,10 @@ import type { CategoryWithKeywords } from '@/types'
 
 interface KeywordsClientProps {
   initialCategories: CategoryWithKeywords[]
+  isAdmin?: boolean
 }
 
-export function KeywordsClient({ initialCategories }: KeywordsClientProps) {
+export function KeywordsClient({ initialCategories, isAdmin = false }: KeywordsClientProps) {
   const [categories, setCategories] = useState<CategoryWithKeywords[]>(initialCategories)
   const [selectedId, setSelectedId] = useState<string | null>(
     initialCategories[0]?.id ?? null
@@ -104,11 +105,13 @@ export function KeywordsClient({ initialCategories }: KeywordsClientProps) {
         onCreate={handleCreateCategory}
         onUpdate={handleUpdateCategory}
         onDelete={handleDeleteCategory}
+        isAdmin={isAdmin}
       />
       <KeywordList
         category={selectedCategory}
         onAddKeyword={handleAddKeyword}
         onDeleteKeyword={handleDeleteKeyword}
+        isAdmin={isAdmin}
       />
     </div>
   )

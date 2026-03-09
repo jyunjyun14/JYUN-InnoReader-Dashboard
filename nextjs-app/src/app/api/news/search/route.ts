@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
     prisma.scoringConfig.findUnique({ where: { userId: session.user.id } }),
     categoryIds.length > 0
       ? prisma.category.findMany({
-          where: { id: { in: categoryIds }, userId: session.user.id },
+          where: { id: { in: categoryIds } },
           select: { priorityKeywords: true, excludeKeywords: true },
         })
       : Promise.resolve([]),

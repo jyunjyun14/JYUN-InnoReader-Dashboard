@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { parseScoringConfig, DEFAULT_SOURCE_TIERS } from '@/lib/scoring'
+import { getAdminUserId } from '@/lib/admin'
 import { ScoringClient } from '@/components/settings/scoring-client'
 
 export const metadata: Metadata = {
@@ -14,13 +15,16 @@ export default async function ScoringPage() {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) redirect('/login')
 
+  const adminId = await getAdminUserId()
   const [scoringRow, rawCategories] = await Promise.all([
     prisma.scoringConfig.findUnique({ where: { userId: session.user.id } }),
-    prisma.category.findMany({
-      where: { userId: session.user.id },
-      include: { keywords: { orderBy: { createdAt: 'asc' } } },
-      orderBy: { createdAt: 'asc' },
-    }),
+    adminId
+      ? prisma.category.findMany({
+          where: { userId: adminId },
+          include: { keywords: { orderBy: { createdAt: 'asc' } } },
+          orderBy: { createdAt: 'asc' },
+        })
+      : Promise.resolve([]),
   ])
 
   const config = parseScoringConfig(scoringRow)

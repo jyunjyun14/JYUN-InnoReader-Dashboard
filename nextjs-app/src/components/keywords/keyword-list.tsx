@@ -13,9 +13,10 @@ interface KeywordListProps {
   category: CategoryWithKeywords | null
   onAddKeyword: (categoryId: string, term: string) => Promise<Response>
   onDeleteKeyword: (keywordId: string, categoryId: string) => Promise<Response>
+  isAdmin?: boolean
 }
 
-export function KeywordList({ category, onAddKeyword, onDeleteKeyword }: KeywordListProps) {
+export function KeywordList({ category, onAddKeyword, onDeleteKeyword, isAdmin = false }: KeywordListProps) {
   const [term, setTerm] = useState('')
   const [isAdding, setIsAdding] = useState(false)
   const [addError, setAddError] = useState('')
@@ -87,33 +88,37 @@ export function KeywordList({ category, onAddKeyword, onDeleteKeyword }: Keyword
           </span>
         </div>
 
-        {/* 키워드 추가 폼 */}
-        <form onSubmit={handleAdd} className="mt-3 flex gap-2">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              ref={inputRef}
-              value={term}
-              onChange={(e) => {
-                setTerm(e.target.value)
-                setAddError('')
-              }}
-              placeholder="키워드 입력 (영문 권장, 예: digital health)"
-              className="pl-9 text-sm"
-              disabled={isAdding}
-            />
-          </div>
-          <Button type="submit" disabled={isAdding || !term.trim()} className="gap-1.5 shrink-0">
-            {isAdding ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="h-4 w-4" />
+        {/* 키워드 추가 폼 — ADMIN만 표시 */}
+        {isAdmin && (
+          <>
+            <form onSubmit={handleAdd} className="mt-3 flex gap-2">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  ref={inputRef}
+                  value={term}
+                  onChange={(e) => {
+                    setTerm(e.target.value)
+                    setAddError('')
+                  }}
+                  placeholder="키워드 입력 (영문 권장, 예: digital health)"
+                  className="pl-9 text-sm"
+                  disabled={isAdding}
+                />
+              </div>
+              <Button type="submit" disabled={isAdding || !term.trim()} className="gap-1.5 shrink-0">
+                {isAdding ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                추가
+              </Button>
+            </form>
+            {addError && (
+              <p className="text-xs text-destructive mt-1.5">{addError}</p>
             )}
-            추가
-          </Button>
-        </form>
-        {addError && (
-          <p className="text-xs text-destructive mt-1.5">{addError}</p>
+          </>
         )}
       </div>
 
@@ -158,18 +163,20 @@ export function KeywordList({ category, onAddKeyword, onDeleteKeyword }: Keyword
                   </span>
                 </div>
 
-                <button
-                  onClick={() => handleDelete(keyword)}
-                  disabled={deletingId === keyword.id}
-                  className="ml-2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive text-muted-foreground transition-all duration-150 shrink-0"
-                  title="키워드 삭제"
-                >
-                  {deletingId === keyword.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <X className="h-3.5 w-3.5" />
-                  )}
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => handleDelete(keyword)}
+                    disabled={deletingId === keyword.id}
+                    className="ml-2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive text-muted-foreground transition-all duration-150 shrink-0"
+                    title="키워드 삭제"
+                  >
+                    {deletingId === keyword.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <X className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                )}
               </div>
             ))}
           </div>
