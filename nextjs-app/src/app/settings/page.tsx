@@ -16,7 +16,8 @@ export default async function SettingsPage() {
   const session = await getServerSession(authOptions)
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-2xl">
+    <div className="flex-1 overflow-y-auto">
+    <div className="space-y-6 animate-fade-in max-w-2xl pb-10">
       <div>
         <h2 className="text-2xl font-bold text-foreground">설정</h2>
         <p className="text-muted-foreground mt-1">계정 및 앱 설정을 관리하세요.</p>
@@ -97,6 +98,7 @@ export default async function SettingsPage() {
           <Button variant="destructive">계정 삭제</Button>
         </CardContent>
       </Card>
+    </div>
     </div>
   )
 }
