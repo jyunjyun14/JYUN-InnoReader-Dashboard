@@ -11,7 +11,7 @@ import { batchTranslateToKorean } from './translate'
 
 const BASE_URL  = 'https://newsdata.io/api/1/news'  // /latest는 from_date 미지원
 const PAGE_SIZE = 10  // 무료 플랜 최대 (유료: 50)
-const MAX_PAGES = 3   // Vercel free 10s timeout 방지: 최대 3 req × 10건 = 30건 (3 크레딧)
+const MAX_PAGES = 5   // 최대 5 req × 10건 = 50건 (5 크레딧)
 // ⚠️ 무료 플랜 q 파라미터 최대 100자 (UnsupportedQueryLength) → dashboard-client.tsx에서 100자 제한
 
 // ── 국가별 설정 (기존 호환성 유지) ───────────────────────────
@@ -239,7 +239,7 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
 
     try {
       pageData = await fetchOnePage({
-        query, language: config.language, country, apiKey, pageToken,
+        query, language: 'en', country, apiKey, pageToken,
       })
     } catch (err) {
       if (page === 0) throw err  // 첫 페이지 실패 → 에러 전파

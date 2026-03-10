@@ -197,6 +197,7 @@ export function FilterBar({
   allScores,
 }: FilterBarProps) {
   const [scoreOpen, setScoreOpen] = useState(false)
+  const [countryOpen, setCountryOpen] = useState(false)
 
   // 국가 토글
   function toggleCountry(code: string) {
@@ -244,7 +245,7 @@ export function FilterBar({
       <div className="flex flex-wrap items-center gap-2 px-4 py-2">
 
         {/* 국가 선택 */}
-        <DropdownMenu>
+        <DropdownMenu open={countryOpen} onOpenChange={setCountryOpen}>
           <DropdownMenuTrigger asChild>
             <button className="h-8 px-2.5 rounded border border-border bg-background text-sm flex items-center gap-1.5 hover:bg-secondary transition-colors">
               <Globe className="h-3.5 w-3.5 text-muted-foreground" />
@@ -256,6 +257,7 @@ export function FilterBar({
             <DropdownMenuCheckboxItem
               checked={allSelected}
               onCheckedChange={(v) => onCountriesChange(v ? allCodes : [])}
+              onSelect={(e) => e.preventDefault()}
               className="font-medium"
             >
               {allSelected ? '전체 해제' : '전체 선택'}
@@ -271,6 +273,7 @@ export function FilterBar({
                     key={c.code}
                     checked={selectedCountries.includes(c.code)}
                     onCheckedChange={() => toggleCountry(c.code)}
+                    onSelect={(e) => e.preventDefault()}
                   >
                     {c.flag} {c.nameKo}
                   </DropdownMenuCheckboxItem>
