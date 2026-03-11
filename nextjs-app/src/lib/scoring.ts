@@ -224,16 +224,6 @@ export function scoreNewsItem(input: ScoreInput, config: ScoringConfig): number 
 
   const rawTotal = Math.max(0, Math.min(100, kScore + pScore + sScore + rScore + penalty))
 
-  // ── 제목 키워드 게이트 ────────────────────────────────────────
-  // 키워드가 제목에 하나도 없으면 관련성이 낮은 기사로 판단해 점수를 강제 하향
-  const hasKeywordInTitle = terms.some(
-    (t) => t.trim() && strIncludes(title, t)
-  )
-  if (!hasKeywordInTitle) {
-    // 제목 미매칭: 관련 없는 기사로 판단해 완전 제외
-    return 0
-  }
-
   return rawTotal
 }
 
