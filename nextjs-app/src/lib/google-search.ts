@@ -239,7 +239,7 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
 
     try {
       pageData = await fetchOnePage({
-        query, language: 'en', country, apiKey, pageToken,
+        query, language: config.language, country, apiKey, pageToken,
       })
     } catch (err) {
       if (page === 0) throw err  // 첫 페이지 실패 → 에러 전파

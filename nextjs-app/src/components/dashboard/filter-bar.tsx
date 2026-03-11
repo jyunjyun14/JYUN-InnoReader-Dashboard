@@ -1,15 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, Globe, SlidersHorizontal } from 'lucide-react'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { ChevronDown, Globe, SlidersHorizontal, Check } from 'lucide-react'
 import { COUNTRY_OPTIONS, DATE_RANGE_OPTIONS } from '@/types/news'
 import { cn } from '@/lib/utils'
 
@@ -245,43 +237,63 @@ export function FilterBar({
       <div className="flex flex-wrap items-center gap-2 px-4 py-2">
 
         {/* 국가 선택 */}
-        <DropdownMenu open={countryOpen} onOpenChange={setCountryOpen}>
-          <DropdownMenuTrigger asChild>
-            <button className="h-8 px-2.5 rounded border border-border bg-background text-sm flex items-center gap-1.5 hover:bg-secondary transition-colors">
-              <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-              {countryLabel()}
-              <ChevronDown className="h-3 w-3 opacity-60" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-52" align="start">
-            <DropdownMenuCheckboxItem
-              checked={allSelected}
-              onCheckedChange={(v) => onCountriesChange(v ? allCodes : [])}
-              onSelect={(e) => e.preventDefault()}
-              className="font-medium"
-            >
-              {allSelected ? '전체 해제' : '전체 선택'}
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuSeparator />
-            {regionGroups.map(({ region, countries }) => (
-              <div key={region}>
-                <DropdownMenuLabel className="text-xs text-muted-foreground py-1">
-                  {region}
-                </DropdownMenuLabel>
-                {countries.map((c) => (
-                  <DropdownMenuCheckboxItem
-                    key={c.code}
-                    checked={selectedCountries.includes(c.code)}
-                    onCheckedChange={() => toggleCountry(c.code)}
-                    onSelect={(e) => e.preventDefault()}
-                  >
-                    {c.flag} {c.nameKo}
-                  </DropdownMenuCheckboxItem>
+        <div className="relative">
+          {/* 바깥 클릭 닫기용 투명 오버레이 */}
+          {countryOpen && (
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setCountryOpen(false)}
+            />
+          )}
+          <button
+            onClick={() => setCountryOpen((v) => !v)}
+            className="h-8 px-2.5 rounded border border-border bg-background text-sm flex items-center gap-1.5 hover:bg-secondary transition-colors"
+          >
+            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+            {countryLabel()}
+            <ChevronDown className={cn('h-3 w-3 opacity-60 transition-transform duration-200', countryOpen && 'rotate-180')} />
+          </button>
+          {countryOpen && (
+            <div className="absolute left-0 top-full mt-1 z-50 w-52 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+              {/* 전체 선택/해제 */}
+              <button
+                onClick={() => onCountriesChange(allSelected ? [] : allCodes)}
+                className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm font-medium outline-none hover:bg-accent hover:text-accent-foreground"
+              >
+                <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+                  {allSelected && <Check className="h-4 w-4" />}
+                </span>
+                {allSelected ? '전체 해제' : '전체 선택'}
+              </button>
+              <div className="-mx-1 my-1 h-px bg-muted" />
+              {/* 지역별 국가 목록 */}
+              <div className="max-h-72 overflow-y-auto">
+                {regionGroups.map(({ region, countries }) => (
+                  <div key={region}>
+                    <div className="px-2 py-1 text-xs text-muted-foreground font-semibold">
+                      {region}
+                    </div>
+                    {countries.map((c) => {
+                      const checked = selectedCountries.includes(c.code)
+                      return (
+                        <button
+                          key={c.code}
+                          onClick={() => toggleCountry(c.code)}
+                          className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                        >
+                          <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+                            {checked && <Check className="h-4 w-4" />}
+                          </span>
+                          {c.flag} {c.nameKo}
+                        </button>
+                      )
+                    })}
+                  </div>
                 ))}
               </div>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </div>
+          )}
+        </div>
 
         {/* 기간 프리셋 버튼 */}
         <div className="flex gap-1 flex-wrap">
