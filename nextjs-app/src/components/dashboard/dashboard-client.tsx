@@ -29,7 +29,7 @@ const DATE_RANGE_API: Record<string, string> = {
   d1: 'd1', d3: 'd3', d7: 'd7',
   w1: 'w1', m1: 'm1', m3: 'm3',
   m6: 'm6', y1: 'y1',
-  custom: 'y1', // 최대 범위 fetch → 클라이언트 필터링
+  custom: 'custom',
 }
 
 // ── 유틸 ───────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
     if (cats.length === 0 || selectedCountries.length === 0) return
 
     // 분야별 쿼리 빌드 (키워드 없는 분야 제외)
-    // ⚠️ .slice() 금지 — 따옴표 중간 절단 시 NewsData.io 422 MalformedQuery 오류
+    // NewsAPI /v2/everything 은 쿼리 길이 제한이 넉넉 (500자 기준 적용)
     const catQueries = cats
       .map((cat) => {
         const parts = cat.keywords.map((k) =>
@@ -122,7 +122,7 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
         let q = ''
         for (const part of parts) {
           const next = q ? `${q} OR ${part}` : part
-          if (next.length > 100) break  // NewsData.io 무료 플랜 100자 제한
+          if (next.length > 500) break
           q = next
         }
         return q ? { catId: cat.id, query: q } : null
@@ -137,6 +137,12 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
 
     const drApi = DATE_RANGE_API[dateRange] ?? 'm1'
 
+    // 커스텀 날짜 검증
+    if (drApi === 'custom' && (!customDateStart || !customDateEnd)) {
+      toast.error('사용자 정의 기간: 시작일과 종료일을 모두 입력해주세요.')
+      return
+    }
+
     setIsLoading(true)
     setError(null)
     setHasSearched(true)
@@ -145,22 +151,26 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
       // 분야 × 국가 조합별 병렬 fetch
       const settled = await Promise.allSettled(
         catQueries.flatMap(({ catId, query }) =>
-          selectedCountries.map((country) =>
-            fetch(
-              `/api/news/search?${new URLSearchParams({
-                query,
-                country,
-                dateRange: drApi,
-                categoryIds: catId,
-              })}`
-            ).then(async (r) => {
-              if (!r.ok) {
-                const type = await classifyError(r)
-                throw Object.assign(new Error(type), { errorType: type })
-              }
-              return r.json()
-            })
-          )
+          selectedCountries.map((country) => {
+            const params: Record<string, string> = {
+              query,
+              country,
+              dateRange: drApi,
+              categoryIds: catId,
+            }
+            if (drApi === 'custom') {
+              params.customFrom = customDateStart
+              params.customTo = customDateEnd
+            }
+            return fetch(`/api/news/search?${new URLSearchParams(params)}`)
+              .then(async (r) => {
+                if (!r.ok) {
+                  const type = await classifyError(r)
+                  throw Object.assign(new Error(type), { errorType: type })
+                }
+                return r.json()
+              })
+          })
         )
       )
 
@@ -208,7 +218,7 @@ export function DashboardClient({ initialCategories }: DashboardClientProps) {
     } finally {
       setIsLoading(false)
     }
-  }, [initialCategories, selectedCategoryIds, selectedCountries, dateRange, translateAll])
+  }, [initialCategories, selectedCategoryIds, selectedCountries, dateRange, customDateStart, customDateEnd, translateAll])
 
   // ── 초기 자동 검색 ────────────────────────────────────────
   useEffect(() => {

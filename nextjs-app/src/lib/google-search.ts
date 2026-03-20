@@ -40,7 +40,7 @@ export const COUNTRY_CONFIGS: Record<string, CountryConfig> = {
 }
 
 export const SUPPORTED_COUNTRIES   = Object.keys(COUNTRY_CONFIGS)
-export const SUPPORTED_DATE_RANGES = ['d1', 'd3', 'd7', 'w1', 'm1', 'm3', 'm6', 'y1']
+export const SUPPORTED_DATE_RANGES = ['d1', 'd3', 'd7', 'w1', 'm1', 'm3', 'm6', 'y1', 'custom']
 
 // ── dateRange → from 날짜 변환 ────────────────────────────────
 
@@ -54,6 +54,14 @@ function dateRangeToFrom(dateRange: string): string {
   const days = Math.min(dayMap[dateRange] ?? 29, MAX_DAYS)
   now.setDate(now.getDate() - days)
   return now.toISOString().split('T')[0]  // YYYY-MM-DD
+}
+
+/** YYYY-MM-DD 문자열을 NewsAPI 무료 플랜 허용 범위(오늘 기준 -29일 이내)로 클램핑 */
+function clampFrom(dateStr: string): string {
+  const MIN_FROM = new Date()
+  MIN_FROM.setDate(MIN_FROM.getDate() - 29)
+  const d = new Date(dateStr)
+  return (d < MIN_FROM ? MIN_FROM : d).toISOString().split('T')[0]
 }
 
 // ── NewsAPI 응답 타입 ──────────────────────────────────────────
@@ -133,12 +141,14 @@ function calculateRelevanceScore(
 // ── 검색 파라미터 & 결과 타입 ─────────────────────────────────
 
 export interface SearchParams {
-  query:      string
-  dateRange?: string
-  country?:   string
-  language?:  string
-  start?:     number
-  num?:       number
+  query:       string
+  dateRange?:  string
+  country?:    string
+  language?:   string
+  start?:      number
+  num?:        number
+  customFrom?: string  // YYYY-MM-DD (dateRange === 'custom' 일 때 사용)
+  customTo?:   string  // YYYY-MM-DD (dateRange === 'custom' 일 때 사용)
 }
 
 export interface SearchResult {
@@ -154,9 +164,10 @@ async function fetchArticles(opts: {
   query:    string
   language: string
   from:     string
+  to?:      string
   apiKey:   string
 }): Promise<{ articles: NewsApiArticle[]; totalResults: number }> {
-  const { query, language, from, apiKey } = opts
+  const { query, language, from, to, apiKey } = opts
 
   const url = new URL(BASE_URL)
   const p   = url.searchParams
@@ -164,6 +175,7 @@ async function fetchArticles(opts: {
   p.set('q',        query)
   p.set('language', language)
   p.set('from',     from)
+  if (to) p.set('to', to)
   p.set('sortBy',   'publishedAt')
   p.set('pageSize', String(PAGE_SIZE))
 
@@ -209,7 +221,7 @@ async function fetchArticles(opts: {
 // ── 메인 검색 함수 ─────────────────────────────────────────────
 
 export async function searchNews(params: SearchParams): Promise<SearchResult> {
-  const { query, dateRange = 'm1', country = 'us' } = params
+  const { query, dateRange = 'm1', country = 'us', customFrom, customTo } = params
 
   const apiKey = process.env.NEWS_API_KEY
   if (!apiKey) {
@@ -217,12 +229,18 @@ export async function searchNews(params: SearchParams): Promise<SearchResult> {
   }
 
   const config = COUNTRY_CONFIGS[country] ?? COUNTRY_CONFIGS.us
-  const from   = dateRangeToFrom(dateRange)
+
+  // 커스텀 날짜 범위: customFrom/customTo 사용 (무료 플랜 29일 이내로 클램핑)
+  const from = dateRange === 'custom' && customFrom
+    ? clampFrom(customFrom)
+    : dateRangeToFrom(dateRange)
+  const to = dateRange === 'custom' && customTo ? customTo : undefined
 
   const { articles, totalResults } = await fetchArticles({
     query,
     language: config.language,
     from,
+    to,
     apiKey,
   })
 

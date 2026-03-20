@@ -11,6 +11,8 @@ export interface CacheParams {
   language: string
   dateRange: string
   start: number
+  customFrom?: string
+  customTo?: string
 }
 
 /** 파라미터 조합의 SHA-1 해시를 캐시 키로 사용 */
@@ -21,6 +23,8 @@ export function buildCacheKey(params: CacheParams): string {
     l: params.language || '',
     d: params.dateRange || 'm1',
     s: params.start || 1,
+    cf: params.customFrom || '',
+    ct: params.customTo || '',
   }
   return createHash('sha1').update(JSON.stringify(normalized)).digest('hex')
 }

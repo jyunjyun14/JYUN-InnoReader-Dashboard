@@ -7,19 +7,26 @@ import {
   COUNTRY_CONFIGS,
   SUPPORTED_DATE_RANGES,
 } from '@/lib/google-search'
+import { searchCSE, CSEError } from '@/lib/google-cse'
+import { searchGdelt } from '@/lib/gdelt'
 import { getCachedSearch, setCachedSearch } from '@/lib/news-cache'
 import { prisma } from '@/lib/prisma'
 import { applyScoring, parseScoringConfig } from '@/lib/scoring'
+import type { NewsItem } from '@/types/news'
 
 /**
  * GET /api/news/search
  *
  * Query params:
  *   query      (필수) 검색 키워드
- *   dateRange  기간 필터 (d1|d3|d7|w1|m1|m3|m6|y1, 기본: m1)
+ *   dateRange  기간 필터 (d1|d3|d7|w1|m1|m3|m6|y1|custom, 기본: m1)
  *   country    국가 코드 (us|gb|jp|kr|..., 기본: us)
  *   language   언어 코드 (미지정 시 country 기반 자동 설정)
  *   start      페이지네이션 시작 인덱스 (1~91, 기본: 1)
+ *   customFrom YYYY-MM-DD (dateRange=custom 시 필수)
+ *   customTo   YYYY-MM-DD (dateRange=custom 시 필수)
+ *
+ * 소스: NewsAPI + Google CSE 병렬 호출 → URL 기준 중복 제거 후 병합
  *
  * 응답 헤더:
  *   X-Cache: HIT | MISS
@@ -34,13 +41,15 @@ export async function GET(req: NextRequest) {
 
   // ── 파라미터 파싱 ────────────────────────────────────────────
   const sp = req.nextUrl.searchParams
-  const query = sp.get('query')?.trim()
-  const dateRange = sp.get('dateRange') ?? 'm1'
-  const country = sp.get('country') ?? 'us'
-  const language = sp.get('language') ?? ''
-  const startRaw = parseInt(sp.get('start') ?? '1', 10)
-  const start = isNaN(startRaw) ? 1 : Math.max(1, startRaw)
+  const query      = sp.get('query')?.trim()
+  const dateRange  = sp.get('dateRange') ?? 'm1'
+  const country    = sp.get('country') ?? 'us'
+  const language   = sp.get('language') ?? ''
+  const startRaw   = parseInt(sp.get('start') ?? '1', 10)
+  const start      = isNaN(startRaw) ? 1 : Math.max(1, startRaw)
   const categoryIds = sp.get('categoryIds')?.split(',').filter(Boolean) ?? []
+  const customFrom = sp.get('customFrom') ?? ''
+  const customTo   = sp.get('customTo') ?? ''
 
   // ── 유효성 검사 ──────────────────────────────────────────────
   if (!query) {
@@ -55,20 +64,20 @@ export async function GET(req: NextRequest) {
       { status: 400 }
     )
   }
+  if (dateRange === 'custom' && (!customFrom || !customTo)) {
+    return NextResponse.json(
+      { error: '사용자 정의 기간 검색 시 customFrom, customTo 날짜를 입력해주세요. (YYYY-MM-DD)' },
+      { status: 400 }
+    )
+  }
   if (!COUNTRY_CONFIGS[country]) {
     return NextResponse.json(
       { error: `지원하지 않는 국가입니다. 허용 값: ${Object.keys(COUNTRY_CONFIGS).join(', ')}` },
       { status: 400 }
     )
   }
-  if (start > 91) {
-    return NextResponse.json(
-      { error: 'start 값은 91을 초과할 수 없습니다. (Google CSE 제한)' },
-      { status: 400 }
-    )
-  }
 
-  const cacheParams = { query, country, language, dateRange, start }
+  const cacheParams = { query, country, language, dateRange, start, customFrom, customTo }
 
   // ── 사용자 스코어링 설정 + 캐시 조회 병렬 실행 ───────────────
   const [cached, scoringRow, catRows] = await Promise.all([
@@ -100,7 +109,6 @@ export async function GET(req: NextRequest) {
     } catch { return [] }
   })
 
-  // 분야별 키워드가 있으면 전역 설정과 병합 (중복 term은 분야별 키워드 우선)
   const mergedPriorityKws = catPriorityKws.length > 0
     ? (() => {
         const catTerms = new Set(catPriorityKws.map((k) => k.term.toLowerCase()))
@@ -124,7 +132,6 @@ export async function GET(req: NextRequest) {
     const cacheAgeSeconds = Math.floor(
       (Date.now() - new Date(cached.cachedAt).getTime()) / 1000
     )
-    // 캐시된 raw 결과에 사용자별 스코어링 적용
     const scoredItems = applyScoring(cached.items, query, mergedConfig)
 
     return NextResponse.json(
@@ -133,22 +140,68 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  // ── NewsData.io API 호출 ─────────────────────────────────────
+  // ── NewsAPI + Google CSE 병렬 호출 ──────────────────────────
   try {
-    const result = await searchNews({ query, dateRange, country, language, start })
+    const searchParams = { query, dateRange, country, language, customFrom, customTo }
 
-    // 캐시 저장은 백그라운드 (raw 결과 = 사용자별 점수 제외)
+    const [newsApiSettled, cseSettled, gdeltSettled] = await Promise.allSettled([
+      searchNews({ ...searchParams, start }),
+      searchCSE(searchParams),
+      searchGdelt(searchParams),
+    ])
+
+    // 결과 수집 (부분 실패 허용)
+    const newsApiResult = newsApiSettled.status === 'fulfilled' ? newsApiSettled.value : null
+    const cseResult     = cseSettled.status    === 'fulfilled' ? cseSettled.value     : null
+    const gdeltResult   = gdeltSettled.status  === 'fulfilled' ? gdeltSettled.value   : null
+
+    // 전부 실패 시에만 에러
+    if (!newsApiResult && !cseResult && !gdeltResult) {
+      throw newsApiSettled.status === 'rejected'
+        ? newsApiSettled.reason
+        : new Error('모든 검색 소스 실패')
+    }
+
+    // URL 기준 중복 제거 병합 (NewsAPI → CSE → GDELT 순)
+    const seen = new Set<string>()
+    const mergedItems: NewsItem[] = []
+    for (const item of [
+      ...(newsApiResult?.items ?? []),
+      ...(cseResult?.items    ?? []),
+      ...(gdeltResult?.items  ?? []),
+    ]) {
+      if (!seen.has(item.link)) {
+        seen.add(item.link)
+        mergedItems.push(item)
+      }
+    }
+
+    const result = {
+      items:        mergedItems,
+      totalResults: (newsApiResult?.totalResults ?? 0) + (cseResult?.totalResults ?? 0) + (gdeltResult?.totalResults ?? 0),
+      startIndex:   1,
+      hasNextPage:  false,
+    }
+
+    // 캐시 저장 (백그라운드)
     setCachedSearch(cacheParams, result).catch((err) =>
       console.error('[CACHE_SET_ERROR]', err)
     )
 
-    // 사용자별 스코어링 적용 후 반환
+    // 소스별 결과 수 로그 (개발용)
+    if (process.env.NODE_ENV === 'development') {
+      console.log(
+        `[SEARCH] NewsAPI: ${newsApiResult?.items.length ?? 'ERR'} | CSE: ${cseResult?.items.length ?? 'ERR'} | GDELT: ${gdeltResult?.items.length ?? 'ERR'}`
+      )
+    }
+
     const scoredItems = applyScoring(result.items, query, mergedConfig)
 
     return NextResponse.json(
       { ...result, items: scoredItems, cached: false, query, country, dateRange },
       { headers: { 'X-Cache': 'MISS' } }
     )
+
   } catch (error) {
     // ── 에러 핸들링 ──────────────────────────────────────────
     if (error instanceof GoogleSearchError) {
@@ -161,7 +214,7 @@ export async function GET(req: NextRequest) {
       if (error.statusCode === 400 || error.statusCode === 403) {
         return NextResponse.json(
           {
-            error: 'NewsData.io 인증 오류입니다. NEWSDATA_API_KEY를 확인해주세요.',
+            error: 'NewsAPI 인증 오류입니다. NEWS_API_KEY를 확인해주세요.',
             code: 'AUTH_ERROR',
             detail: error.reason,
           },
@@ -170,10 +223,7 @@ export async function GET(req: NextRequest) {
       }
       if (error.statusCode >= 500) {
         return NextResponse.json(
-          {
-            error: 'NewsData.io가 일시적으로 사용 불가합니다. 잠시 후 재시도해주세요.',
-            code: 'UPSTREAM_ERROR',
-          },
+          { error: 'NewsAPI가 일시적으로 사용 불가합니다. 잠시 후 재시도해주세요.', code: 'UPSTREAM_ERROR' },
           { status: 502 }
         )
       }
@@ -181,6 +231,11 @@ export async function GET(req: NextRequest) {
         { error: error.message, code: error.reason ?? 'SEARCH_ERROR' },
         { status: error.statusCode }
       )
+    }
+
+    if (error instanceof CSEError) {
+      // CSE 단독 오류 → NewsAPI만으로 재시도하지 않음 (둘 다 실패한 경우만 여기 도달)
+      console.error('[CSE_ERROR]', error.message)
     }
 
     console.error('[NEWS_SEARCH_ERROR]', error)
